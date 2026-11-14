@@ -3,46 +3,48 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as assert from 'assert';
-import { EditOperation } from 'vs/editor/common/core/editOperation';
-import { Range } from 'vs/editor/common/core/range';
-import { TextModel } from 'vs/editor/common/model/textModel';
-import { LineInjectedText, ModelRawChange, RawContentChangedType } from 'vs/editor/common/model/textModelEvents';
-import { createTextModel } from 'vs/editor/test/common/editorTestUtils';
+import assert from 'assert';
+import { mock } from '../../../../base/test/common/mock.js';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+import { EditOperation } from '../../../common/core/editOperation.js';
+import { Range } from '../../../common/core/range.js';
+import { InternalModelContentChangeEvent, ModelInjectedTextChangedEvent, ModelRawChange, RawContentChangedType } from '../../../common/textModelEvents.js';
+import { IViewModel } from '../../../common/viewModel.js';
+import { createTextModel } from '../testTextModel.js';
 
 suite('Editor Model - Injected Text Events', () => {
-	let thisModel: TextModel;
-
-	setup(() => {
-		thisModel = createTextModel('First Line\nSecond Line');
-	});
-
-	teardown(() => {
-		thisModel.dispose();
-	});
+	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
 	test('Basic', () => {
+		const thisModel = store.add(createTextModel('First Line\nSecond Line'));
+
 		const recordedChanges = new Array<unknown>();
 
-		thisModel.onDidChangeContentOrInjectedText((e) => {
-			for (const change of e.changes) {
-				recordedChanges.push(mapChange(change));
+		const spyViewModel = new class extends mock<IViewModel>() {
+			override onDidChangeContentOrInjectedText(e: InternalModelContentChangeEvent | ModelInjectedTextChangedEvent) {
+				const changes = (e instanceof InternalModelContentChangeEvent ? e.rawContentChangedEvent.changes : e.changes);
+				for (const change of changes) {
+					recordedChanges.push(mapChange(change));
+				}
 			}
-		});
+			override emitContentChangeEvent(_e: InternalModelContentChangeEvent | ModelInjectedTextChangedEvent): void { }
+		};
+		thisModel.registerViewModel(spyViewModel);
 
 		// Initial decoration
 		let decorations = thisModel.deltaDecorations([], [{
 			options: {
 				after: { content: 'injected1' },
 				description: 'test1',
+				showIfCollapsed: true
 			},
 			range: new Range(1, 1, 1, 1),
 		}]);
 		assert.deepStrictEqual(recordedChanges.splice(0), [
 			{
 				kind: 'lineChanged',
-				line: '[injected1]First Line',
 				lineNumber: 1,
+				lineNumberPostEdit: 1,
 			}
 		]);
 
@@ -51,25 +53,27 @@ suite('Editor Model - Injected Text Events', () => {
 			options: {
 				after: { content: 'injected1' },
 				description: 'test1',
+				showIfCollapsed: true
 			},
 			range: new Range(2, 1, 2, 1),
 		}, {
 			options: {
 				after: { content: 'injected2' },
 				description: 'test2',
+				showIfCollapsed: true
 			},
 			range: new Range(2, 2, 2, 2),
 		}]);
 		assert.deepStrictEqual(recordedChanges.splice(0), [
 			{
 				kind: 'lineChanged',
-				line: 'First Line',
 				lineNumber: 1,
+				lineNumberPostEdit: 1,
 			},
 			{
 				kind: 'lineChanged',
-				line: '[injected1]S[injected2]econd Line',
 				lineNumber: 2,
+				lineNumberPostEdit: 2,
 			}
 		]);
 
@@ -78,8 +82,8 @@ suite('Editor Model - Injected Text Events', () => {
 		assert.deepStrictEqual(recordedChanges.splice(0), [
 			{
 				kind: 'lineChanged',
-				line: '[injected1]SHello[injected2]econd Line',
 				lineNumber: 2,
+				lineNumberPostEdit: 2,
 			}
 		]);
 
@@ -96,17 +100,13 @@ suite('Editor Model - Injected Text Events', () => {
 		assert.deepStrictEqual(recordedChanges.splice(0), [
 			{
 				kind: 'lineChanged',
-				line: '[injected1]S',
 				lineNumber: 2,
+				lineNumberPostEdit: 2,
 			},
 			{
-				fromLineNumber: 3,
 				kind: 'linesInserted',
-				lines: [
-					'',
-					'',
-					'Hello[injected2]econd Line',
-				]
+				fromLineNumber: 3,
+				count: 3,
 			}
 		]);
 
@@ -115,36 +115,24 @@ suite('Editor Model - Injected Text Events', () => {
 		thisModel.pushEditOperations(null, [EditOperation.replace(new Range(3, 1, 5, 1), '\n\n\n\n\n\n\n\n\n\n\n\n\n')], null);
 		assert.deepStrictEqual(recordedChanges.splice(0), [
 			{
-				'kind': 'lineChanged',
-				'line': '',
-				'lineNumber': 5,
+				kind: 'lineChanged',
+				lineNumber: 5,
+				lineNumberPostEdit: 5,
 			},
 			{
-				'kind': 'lineChanged',
-				'line': '',
-				'lineNumber': 4,
+				kind: 'lineChanged',
+				lineNumber: 4,
+				lineNumberPostEdit: 4,
 			},
 			{
-				'kind': 'lineChanged',
-				'line': '',
-				'lineNumber': 3,
+				kind: 'lineChanged',
+				lineNumber: 3,
+				lineNumberPostEdit: 3,
 			},
 			{
-				'fromLineNumber': 6,
-				'kind': 'linesInserted',
-				'lines': [
-					'',
-					'',
-					'',
-					'',
-					'',
-					'',
-					'',
-					'',
-					'',
-					'',
-					'Hello[injected2]econd Line',
-				]
+				kind: 'linesInserted',
+				fromLineNumber: 6,
+				count: 11,
 			}
 		]);
 
@@ -153,32 +141,30 @@ suite('Editor Model - Injected Text Events', () => {
 		assert.deepStrictEqual(recordedChanges.splice(0), [
 			{
 				kind: 'lineChanged',
-				line: '[injected1]SHello[injected2]econd Line',
 				lineNumber: 2,
+				lineNumberPostEdit: 2,
 			},
 			{
 				kind: 'linesDeleted',
 			}
 		]);
+
+		thisModel.unregisterViewModel(spyViewModel);
 	});
 });
 
 function mapChange(change: ModelRawChange): unknown {
 	if (change.changeType === RawContentChangedType.LineChanged) {
-		(change.injectedText || []).every(e => {
-			assert.deepStrictEqual(e.lineNumber, change.lineNumber);
-		});
-
 		return {
 			kind: 'lineChanged',
-			line: getDetail(change.detail, change.injectedText),
 			lineNumber: change.lineNumber,
+			lineNumberPostEdit: change.lineNumberPostEdit,
 		};
 	} else if (change.changeType === RawContentChangedType.LinesInserted) {
 		return {
 			kind: 'linesInserted',
-			lines: change.detail.map((e, idx) => getDetail(e, change.injectedTexts[idx])),
-			fromLineNumber: change.fromLineNumber
+			fromLineNumber: change.fromLineNumber,
+			count: change.count,
 		};
 	} else if (change.changeType === RawContentChangedType.LinesDeleted) {
 		return {
@@ -194,8 +180,4 @@ function mapChange(change: ModelRawChange): unknown {
 		};
 	}
 	return { kind: 'unknown' };
-}
-
-function getDetail(line: string, injectedTexts: LineInjectedText[] | null): string {
-	return LineInjectedText.applyInjectedText(line, (injectedTexts || []).map(t => t.withText(`[${t.options.content}]`)));
 }

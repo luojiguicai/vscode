@@ -3,40 +3,31 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as DOM from 'vs/base/browser/dom';
-import { IMouseEvent } from 'vs/base/browser/mouseEvent';
-import { DisposableStore } from 'vs/base/common/lifecycle';
+import * as DOM from './dom.js';
+import { IKeyboardEvent } from './keyboardEvent.js';
+import { IMouseEvent } from './mouseEvent.js';
+import { DisposableStore } from '../common/lifecycle.js';
 
 export interface IContentActionHandler {
-	callback: (content: string, event?: IMouseEvent) => void;
-	readonly disposeables: DisposableStore;
+	readonly callback: (content: string, event: IMouseEvent | IKeyboardEvent) => void;
+	readonly disposables: DisposableStore;
 }
 
 export interface FormattedTextRenderOptions {
-	readonly className?: string;
-	readonly inline?: boolean;
 	readonly actionHandler?: IContentActionHandler;
-	readonly renderCodeSegements?: boolean;
+	readonly renderCodeSegments?: boolean;
 }
 
-export function renderText(text: string, options: FormattedTextRenderOptions = {}): HTMLElement {
-	const element = createElement(options);
+export function renderText(text: string, _options?: FormattedTextRenderOptions, target?: HTMLElement): HTMLElement {
+	const element = target ?? document.createElement('div');
 	element.textContent = text;
 	return element;
 }
 
-export function renderFormattedText(formattedText: string, options: FormattedTextRenderOptions = {}): HTMLElement {
-	const element = createElement(options);
-	_renderFormattedText(element, parseFormattedText(formattedText, !!options.renderCodeSegements), options.actionHandler, options.renderCodeSegements);
-	return element;
-}
-
-export function createElement(options: FormattedTextRenderOptions): HTMLElement {
-	const tagName = options.inline ? 'span' : 'div';
-	const element = document.createElement(tagName);
-	if (options.className) {
-		element.className = options.className;
-	}
+export function renderFormattedText(formattedText: string, options?: FormattedTextRenderOptions, target?: HTMLElement): HTMLElement {
+	const element = target ?? document.createElement('div');
+	element.textContent = '';
+	_renderFormattedText(element, parseFormattedText(formattedText, !!options?.renderCodeSegments), options?.actionHandler, options?.renderCodeSegments);
 	return element;
 }
 
@@ -87,7 +78,7 @@ interface IFormatParseTree {
 	children?: IFormatParseTree[];
 }
 
-function _renderFormattedText(element: Node, treeNode: IFormatParseTree, actionHandler?: IContentActionHandler, renderCodeSegements?: boolean) {
+function _renderFormattedText(element: Node, treeNode: IFormatParseTree, actionHandler?: IContentActionHandler, renderCodeSegments?: boolean) {
 	let child: Node | undefined;
 
 	if (treeNode.type === FormatType.Text) {
@@ -96,12 +87,11 @@ function _renderFormattedText(element: Node, treeNode: IFormatParseTree, actionH
 		child = document.createElement('b');
 	} else if (treeNode.type === FormatType.Italics) {
 		child = document.createElement('i');
-	} else if (treeNode.type === FormatType.Code && renderCodeSegements) {
+	} else if (treeNode.type === FormatType.Code && renderCodeSegments) {
 		child = document.createElement('code');
 	} else if (treeNode.type === FormatType.Action && actionHandler) {
 		const a = document.createElement('a');
-		a.href = '#';
-		actionHandler.disposeables.add(DOM.addStandardDisposableListener(a, 'click', (event) => {
+		actionHandler.disposables.add(DOM.addStandardDisposableListener(a, 'click', (event) => {
 			actionHandler.callback(String(treeNode.index), event);
 		}));
 
@@ -118,7 +108,7 @@ function _renderFormattedText(element: Node, treeNode: IFormatParseTree, actionH
 
 	if (child && Array.isArray(treeNode.children)) {
 		treeNode.children.forEach((nodeChild) => {
-			_renderFormattedText(child!, nodeChild, actionHandler, renderCodeSegements);
+			_renderFormattedText(child, nodeChild, actionHandler, renderCodeSegments);
 		});
 	}
 }

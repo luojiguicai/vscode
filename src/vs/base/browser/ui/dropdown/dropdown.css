@@ -20,6 +20,11 @@
 	cursor: default;
 }
 
+.monaco-dropdown .dropdown-menu {
+	border-radius: var(--vscode-cornerRadius-large);
+	box-shadow: var(--vscode-shadow-lg);
+}
+
 .monaco-dropdown-with-primary {
 	display: flex !important;
 	flex-direction: row;
@@ -35,7 +40,7 @@
 	padding-left: 0px;
 	padding-right: 0px;
 	line-height: 16px;
-	margin-left: -4px;
+	margin-left: -3px;
 }
 
 .monaco-dropdown-with-primary > .dropdown-action-container > .monaco-dropdown > .dropdown-label > .action-label {

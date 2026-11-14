@@ -24,7 +24,7 @@
 	],
 	"folding": {
 		"markers": {
-			"start": "^\\s*\\/\\*\\s*#region\\b\\s*(.*?)\\s*\\*\\/",
+			"start": "^\\s*\\/\\*\\s*#region\\b\\s*(?<label>.*?)\\s*\\*\\/",
 			"end": "^\\s*\\/\\*\\s*#endregion\\b.*\\*\\/"
 		}
 	},
@@ -32,5 +32,14 @@
 		"increaseIndentPattern": "(^.*\\{[^}]*$)",
 		"decreaseIndentPattern": "^\\s*\\}"
 	},
-	"wordPattern": "(#?-?\\d*\\.\\d\\w*%?)|(::?[\\w-]*(?=[^,{;]*[,{]))|(([@$#.!])?[\\w-?]+%?|[@#!$.])"
+	"wordPattern": "(#?-?\\d*\\.\\d\\w*%?)|(::?[\\w-]*(?=[^,{;]*[,{]))|(([@$#.!])?[\\w-?]+%?|[@#!$.])",
+	"onEnterRules": [
+		{
+			"beforeText": "^[\\s]*///.*$",
+			"action": {
+				"indent": "none",
+				"appendText": "/// "
+			}
+		}
+	]
 }

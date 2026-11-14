@@ -3,20 +3,22 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as assert from 'assert';
-import { URI } from 'vs/base/common/uri';
-import { hasWorkspaceFileExtension, toWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, isWorkspaceIdentifier, ISerializedWorkspaceIdentifier, reviveIdentifier, ISerializedSingleFolderWorkspaceIdentifier, IEmptyWorkspaceIdentifier } from 'vs/platform/workspaces/common/workspaces';
+import assert from 'assert';
+import { URI } from '../../../../base/common/uri.js';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+import { ISerializedSingleFolderWorkspaceIdentifier, ISerializedWorkspaceIdentifier, reviveIdentifier, hasWorkspaceFileExtension, isWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, IEmptyWorkspaceIdentifier, toWorkspaceIdentifier, isEmptyWorkspaceIdentifier } from '../../../workspace/common/workspace.js';
+import { testIWorkspace } from '../../../workspace/test/common/testWorkspace.js';
 
 suite('Workspaces', () => {
 
 	test('reviveIdentifier', () => {
-		let serializedWorkspaceIdentifier: ISerializedWorkspaceIdentifier = { id: 'id', configPath: URI.file('foo').toJSON() };
+		const serializedWorkspaceIdentifier: ISerializedWorkspaceIdentifier = { id: 'id', configPath: URI.file('foo').toJSON() };
 		assert.strictEqual(isWorkspaceIdentifier(reviveIdentifier(serializedWorkspaceIdentifier)), true);
 
-		let serializedSingleFolderWorkspaceIdentifier: ISerializedSingleFolderWorkspaceIdentifier = { id: 'id', uri: URI.file('foo').toJSON() };
+		const serializedSingleFolderWorkspaceIdentifier: ISerializedSingleFolderWorkspaceIdentifier = { id: 'id', uri: URI.file('foo').toJSON() };
 		assert.strictEqual(isSingleFolderWorkspaceIdentifier(reviveIdentifier(serializedSingleFolderWorkspaceIdentifier)), true);
 
-		let serializedEmptyWorkspaceIdentifier: IEmptyWorkspaceIdentifier = { id: 'id' };
+		const serializedEmptyWorkspaceIdentifier: IEmptyWorkspaceIdentifier = { id: 'id' };
 		assert.strictEqual(reviveIdentifier(serializedEmptyWorkspaceIdentifier).id, serializedEmptyWorkspaceIdentifier.id);
 		assert.strictEqual(isWorkspaceIdentifier(serializedEmptyWorkspaceIdentifier), false);
 		assert.strictEqual(isSingleFolderWorkspaceIdentifier(serializedEmptyWorkspaceIdentifier), false);
@@ -30,19 +32,22 @@ suite('Workspaces', () => {
 	});
 
 	test('toWorkspaceIdentifier', () => {
-		let identifier = toWorkspaceIdentifier({ id: 'id', folders: [] });
-		assert.ok(!identifier);
-		assert.ok(!isSingleFolderWorkspaceIdentifier(identifier));
+		let identifier = toWorkspaceIdentifier(testIWorkspace({ id: 'id', folders: [] }));
+		assert.ok(identifier);
+		assert.ok(isEmptyWorkspaceIdentifier(identifier));
+		assert.ok(!isWorkspaceIdentifier(identifier));
 		assert.ok(!isWorkspaceIdentifier(identifier));
 
-		identifier = toWorkspaceIdentifier({ id: 'id', folders: [{ index: 0, name: 'test', toResource: () => URI.file('test'), uri: URI.file('test') }] });
+		identifier = toWorkspaceIdentifier(testIWorkspace({ id: 'id', folders: [{ index: 0, name: 'test', toResource: () => URI.file('test'), uri: URI.file('test') }] }));
 		assert.ok(identifier);
 		assert.ok(isSingleFolderWorkspaceIdentifier(identifier));
 		assert.ok(!isWorkspaceIdentifier(identifier));
 
-		identifier = toWorkspaceIdentifier({ id: 'id', configuration: URI.file('test.code-workspace'), folders: [] });
+		identifier = toWorkspaceIdentifier(testIWorkspace({ id: 'id', configuration: URI.file('test.code-workspace'), folders: [] }));
 		assert.ok(identifier);
 		assert.ok(!isSingleFolderWorkspaceIdentifier(identifier));
 		assert.ok(isWorkspaceIdentifier(identifier));
 	});
+
+	ensureNoDisposablesAreLeakedInTestSuite();
 });

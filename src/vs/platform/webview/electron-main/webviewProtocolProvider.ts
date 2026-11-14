@@ -3,50 +3,55 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { protocol, session } from 'electron';
-import { Disposable } from 'vs/base/common/lifecycle';
-import { FileAccess, Schemas } from 'vs/base/common/network';
-import { URI } from 'vs/base/common/uri';
-import { webviewPartitionId } from 'vs/platform/webview/common/webviewManagerService';
+import electron from 'electron';
+import { IDisposable } from '../../../base/common/lifecycle.js';
+import { AppResourcePath, COI, FileAccess, Schemas } from '../../../base/common/network.js';
+import { URI } from '../../../base/common/uri.js';
+import { IFileService } from '../../files/common/files.js';
 
 
-export class WebviewProtocolProvider extends Disposable {
+export class WebviewProtocolProvider implements IDisposable {
 
-	private static validWebviewFilePaths = new Map([
-		['/index.html', 'index.html'],
-		['/fake.html', 'fake.html'],
-		['/electron-browser-index.html', 'index.html'],
-		['/main.js', 'main.js'],
-		['/host.js', 'host.js'],
-		['/service-worker.js', 'service-worker.js'],
+	private static validWebviewFilePaths = new Map<string, { readonly mime: string }>([
+		['/index.html', { mime: 'text/html' }],
+		['/fake.html', { mime: 'text/html' }],
+		['/service-worker.js', { mime: 'application/javascript' }],
 	]);
 
-	constructor() {
-		super();
-
-		const sess = session.fromPartition(webviewPartitionId);
-
-		// Register the protocol loading webview html
+	constructor(
+		@IFileService private readonly _fileService: IFileService
+	) {
+		// Register the protocol for loading webview html
 		const webviewHandler = this.handleWebviewRequest.bind(this);
-		protocol.registerFileProtocol(Schemas.vscodeWebview, webviewHandler);
-		sess.protocol.registerFileProtocol(Schemas.vscodeWebview, webviewHandler);
+		electron.protocol.handle(Schemas.vscodeWebview, webviewHandler);
 	}
 
-	private async handleWebviewRequest(
-		request: Electron.ProtocolRequest,
-		callback: (response: string | Electron.ProtocolResponse) => void
-	) {
+	dispose(): void {
+		electron.protocol.unhandle(Schemas.vscodeWebview);
+	}
+
+	private async handleWebviewRequest(request: GlobalRequest): Promise<GlobalResponse> {
 		try {
 			const uri = URI.parse(request.url);
 			const entry = WebviewProtocolProvider.validWebviewFilePaths.get(uri.path);
-			if (typeof entry === 'string') {
-				const relativeResourcePath = `vs/workbench/contrib/webview/browser/pre/${entry}`;
-				const url = FileAccess.asFileUri(relativeResourcePath, require);
-				return callback(decodeURIComponent(url.fsPath));
+			if (entry) {
+				const relativeResourcePath: AppResourcePath = `vs/workbench/contrib/webview/browser/pre${uri.path}`;
+				const url = FileAccess.asFileUri(relativeResourcePath);
+
+				const content = await this._fileService.readFile(url);
+				return new Response(content.value.buffer as ArrayBufferView<ArrayBuffer>, {
+					headers: {
+						'Content-Type': entry.mime,
+						...COI.getHeadersFromQuery(request.url),
+						'Cross-Origin-Resource-Policy': 'cross-origin',
+					}
+				});
+			} else {
+				return new Response(null, { status: 403 });
 			}
 		} catch {
 			// noop
 		}
-		callback({ error: -10 /* ACCESS_DENIED - https://cs.chromium.org/chromium/src/net/base/net_error_list.h?l=32 */ });
+		return new Response(null, { status: 500 });
 	}
 }

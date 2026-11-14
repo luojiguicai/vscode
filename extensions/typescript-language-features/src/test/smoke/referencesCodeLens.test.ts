@@ -6,13 +6,13 @@
 import * as assert from 'assert';
 import 'mocha';
 import * as vscode from 'vscode';
-import { disposeAll } from '../../utils/dispose';
 import { createTestEditor, wait } from '../../test/testUtils';
+import { disposeAll } from '../../utils/dispose';
 
 
-type VsCodeConfiguration = { [key: string]: any };
+export type VsCodeConfiguration = { [key: string]: any };
 
-async function updateConfig(newConfig: VsCodeConfiguration): Promise<VsCodeConfiguration> {
+export async function updateConfig(newConfig: VsCodeConfiguration): Promise<VsCodeConfiguration> {
 	const oldConfig: VsCodeConfiguration = {};
 	const config = vscode.workspace.getConfiguration(undefined);
 	for (const configKey of Object.keys(newConfig)) {
@@ -29,7 +29,7 @@ namespace Config {
 }
 
 suite('TypeScript References', () => {
-	const configDefaults: VsCodeConfiguration = Object.freeze({
+	const configDefaults = Object.freeze<VsCodeConfiguration>({
 		[Config.referencesCodeLens]: true,
 	});
 

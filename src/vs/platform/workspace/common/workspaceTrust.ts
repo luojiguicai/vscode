@@ -3,28 +3,26 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Event } from 'vs/base/common/event';
-import { IDisposable } from 'vs/base/common/lifecycle';
-import { URI } from 'vs/base/common/uri';
-import { localize } from 'vs/nls';
-import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
+import { Event } from '../../../base/common/event.js';
+import { IDisposable } from '../../../base/common/lifecycle.js';
+import { URI } from '../../../base/common/uri.js';
+import { createDecorator } from '../../instantiation/common/instantiation.js';
 
 export enum WorkspaceTrustScope {
 	Local = 0,
 	Remote = 1
 }
 
-export function workspaceTrustToString(trustState: boolean) {
-	if (trustState) {
-		return localize('trusted', "Trusted");
-	} else {
-		return localize('untrusted', "Restricted Mode");
-	}
-}
-
 export interface WorkspaceTrustRequestButton {
 	readonly label: string;
-	readonly type: 'ContinueWithTrust' | 'ContinueWithoutTrust' | 'Manage' | 'Cancel'
+	readonly type: 'ContinueWithTrust' | 'ContinueWithoutTrust' | 'Manage' | 'Cancel';
+}
+
+export interface ResourceTrustRequestOptions {
+	readonly uri: URI;
+	readonly message?: string;
+	/** Label of the remote agent environment hosting the resource, when it is not on this computer. */
+	readonly remoteHostLabel?: string;
 }
 
 export interface WorkspaceTrustRequestOptions {
@@ -32,15 +30,22 @@ export interface WorkspaceTrustRequestOptions {
 	readonly message?: string;
 }
 
+export const IWorkspaceTrustEnablementService = createDecorator<IWorkspaceTrustEnablementService>('workspaceTrustEnablementService');
+
+export interface IWorkspaceTrustEnablementService {
+	readonly _serviceBrand: undefined;
+
+	isWorkspaceTrustEnabled(): boolean;
+}
+
 export const IWorkspaceTrustManagementService = createDecorator<IWorkspaceTrustManagementService>('workspaceTrustManagementService');
 
 export interface IWorkspaceTrustManagementService {
 	readonly _serviceBrand: undefined;
 
-	onDidChangeTrust: Event<boolean>;
-	onDidChangeTrustedFolders: Event<void>;
+	readonly onDidChangeTrust: Event<boolean>;
+	readonly onDidChangeTrustedFolders: Event<void>;
 
-	readonly workspaceTrustEnabled: boolean;
 	readonly workspaceResolved: Promise<void>;
 	readonly workspaceTrustInitialized: Promise<void>;
 	acceptsOutOfWorkspaceFiles: boolean;
@@ -54,10 +59,19 @@ export interface IWorkspaceTrustManagementService {
 	canSetWorkspaceTrust(): boolean;
 	setWorkspaceTrust(trusted: boolean): Promise<void>;
 
+	isWorkspaceTrustSourceResolved(): boolean;
+	resolveWorkspaceTrust(): Promise<void>;
+
+	/** Rechecks changed source providers, returning untrusted if no stable source can be verified. */
 	getUriTrustInfo(uri: URI): Promise<IWorkspaceTrustUriInfo>;
+	/** Uses saved virtual identities directly; rejects if a required source provider changes before updating approvals. */
 	setUrisTrust(uri: URI[], trusted: boolean): Promise<void>;
 
+	/** Automatically trusts an exact scheme and authority for the registration's lifetime, without persisting user trust. */
+	registerTrustedAuthority(scheme: string, authority: string): IDisposable;
+
 	getTrustedUris(): URI[];
+	/** Preserves unchanged approvals; rejects if a newly resolved source's provider changes before persistence. */
 	setTrustedUris(uris: URI[]): Promise<void>;
 
 	addWorkspaceTrustTransitionParticipant(participant: IWorkspaceTrustTransitionParticipant): IDisposable;
@@ -76,13 +90,19 @@ export interface IWorkspaceTrustRequestService {
 
 	readonly onDidInitiateOpenFilesTrustRequest: Event<void>;
 	readonly onDidInitiateWorkspaceTrustRequest: Event<WorkspaceTrustRequestOptions | undefined>;
+	readonly onDidInitiateWorkspaceTrustRequestOnStartup: Event<void>;
+	readonly onDidInitiateResourcesTrustRequest: Event<ResourceTrustRequestOptions>;
 
 	completeOpenFilesTrustRequest(result: WorkspaceTrustUriResponse, saveResponse?: boolean): Promise<void>;
 	requestOpenFilesTrust(openFiles: URI[]): Promise<WorkspaceTrustUriResponse>;
 
+	completeResourcesTrustRequest(uri: URI, result: WorkspaceTrustUriResponse): Promise<void>;
+	requestResourcesTrust(options: ResourceTrustRequestOptions): Promise<boolean | undefined>;
+
 	cancelWorkspaceTrustRequest(): void;
 	completeWorkspaceTrustRequest(trusted?: boolean): Promise<void>;
 	requestWorkspaceTrust(options?: WorkspaceTrustRequestOptions): Promise<boolean | undefined>;
+	requestWorkspaceTrustOnStartup(): void;
 }
 
 export interface IWorkspaceTrustTransitionParticipant {
@@ -90,10 +110,10 @@ export interface IWorkspaceTrustTransitionParticipant {
 }
 
 export interface IWorkspaceTrustUriInfo {
-	uri: URI,
-	trusted: boolean
+	uri: URI;
+	trusted: boolean;
 }
 
 export interface IWorkspaceTrustInfo {
-	uriTrustInfo: IWorkspaceTrustUriInfo[]
+	uriTrustInfo: IWorkspaceTrustUriInfo[];
 }

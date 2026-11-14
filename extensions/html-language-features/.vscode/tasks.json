@@ -2,9 +2,9 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "npm",
-			"command": "npm",
-			"args": ["run", "compile"],
+			"label": "pnpm run compile",
+			"command": "pnpm run",
+			"args": ["compile"],
 			"type": "shell",
 			"presentation": {
 				"reveal": "silent",

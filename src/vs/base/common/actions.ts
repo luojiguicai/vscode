@@ -3,9 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as nls from 'vs/nls';
-import { IDisposable, Disposable } from 'vs/base/common/lifecycle';
-import { Event, Emitter } from 'vs/base/common/event';
+import { Emitter, Event } from './event.js';
+import { Disposable, IDisposable } from './lifecycle.js';
+import { isLinux, isWindows } from './platform.js';
+import * as nls from '../../nls.js';
 
 export interface ITelemetryData {
 	readonly from?: string;
@@ -14,28 +15,39 @@ export interface ITelemetryData {
 }
 
 export type WorkbenchActionExecutedClassification = {
-	id: { classification: 'SystemMetaData', purpose: 'FeatureInsight'; };
-	from: { classification: 'SystemMetaData', purpose: 'FeatureInsight'; };
+	id: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'The identifier of the action that was run.' };
+	from: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'The name of the component the action was run from.' };
+	detail?: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'Optional details about how the action was run, e.g which keybinding was used.' };
+	owner: 'isidorn';
+	comment: 'Provides insight into actions that are executed within the workbench.';
 };
 
 export type WorkbenchActionExecutedEvent = {
 	id: string;
 	from: string;
+	detail?: string;
 };
 
-export interface IAction extends IDisposable {
+export interface IAction {
 	readonly id: string;
 	label: string;
 	tooltip: string;
 	class: string | undefined;
 	enabled: boolean;
-	checked: boolean;
-	run(event?: unknown): unknown;
+	checked?: boolean;
+	/** Alternative action for this item. */
+	readonly alt?: IAction;
+	run(...args: unknown[]): unknown;
+}
+
+export function getActionForAltMode(action: IAction, modifiers: { readonly altKey?: boolean; readonly shiftKey?: boolean }): IAction {
+	const useAlternative = modifiers.altKey || ((isWindows || isLinux) && modifiers.shiftKey);
+	return useAlternative && action.enabled && action.alt?.enabled ? action.alt : action;
 }
 
 export interface IActionRunner extends IDisposable {
 	readonly onDidRun: Event<IRunEvent>;
-	readonly onBeforeRun: Event<IRunEvent>;
+	readonly onWillRun: Event<IRunEvent>;
 
 	run(action: IAction, context?: unknown): unknown;
 }
@@ -48,17 +60,22 @@ export interface IActionChangeEvent {
 	readonly checked?: boolean;
 }
 
+/**
+ * A concrete implementation of {@link IAction}.
+ *
+ * Note that in most cases you should use the lighter-weight {@linkcode toAction} function instead.
+ */
 export class Action extends Disposable implements IAction {
 
 	protected _onDidChange = this._register(new Emitter<IActionChangeEvent>());
-	readonly onDidChange = this._onDidChange.event;
+	get onDidChange() { return this._onDidChange.event; }
 
 	protected readonly _id: string;
 	protected _label: string;
 	protected _tooltip: string | undefined;
 	protected _cssClass: string | undefined;
 	protected _enabled: boolean = true;
-	protected _checked: boolean = false;
+	protected _checked?: boolean;
 	protected readonly _actionCallback?: (event?: unknown) => unknown;
 
 	constructor(id: string, label: string = '', cssClass: string = '', enabled: boolean = true, actionCallback?: (event?: unknown) => unknown) {
@@ -134,15 +151,15 @@ export class Action extends Disposable implements IAction {
 		}
 	}
 
-	get checked(): boolean {
+	get checked(): boolean | undefined {
 		return this._checked;
 	}
 
-	set checked(value: boolean) {
+	set checked(value: boolean | undefined) {
 		this._setChecked(value);
 	}
 
-	protected _setChecked(value: boolean): void {
+	protected _setChecked(value: boolean | undefined): void {
 		if (this._checked !== value) {
 			this._checked = value;
 			this._onDidChange.fire({ checked: value });
@@ -163,18 +180,18 @@ export interface IRunEvent {
 
 export class ActionRunner extends Disposable implements IActionRunner {
 
-	private _onBeforeRun = this._register(new Emitter<IRunEvent>());
-	readonly onBeforeRun = this._onBeforeRun.event;
+	private readonly _onWillRun = this._register(new Emitter<IRunEvent>());
+	get onWillRun() { return this._onWillRun.event; }
 
-	private _onDidRun = this._register(new Emitter<IRunEvent>());
-	readonly onDidRun = this._onDidRun.event;
+	private readonly _onDidRun = this._register(new Emitter<IRunEvent>());
+	get onDidRun() { return this._onDidRun.event; }
 
 	async run(action: IAction, context?: unknown): Promise<void> {
 		if (!action.enabled) {
 			return;
 		}
 
-		this._onBeforeRun.fire({ action });
+		this._onWillRun.fire({ action });
 
 		let error: Error | undefined = undefined;
 		try {
@@ -191,7 +208,14 @@ export class ActionRunner extends Disposable implements IActionRunner {
 	}
 }
 
-export class Separator extends Action {
+/**
+ * Separates groups of actions.
+ *
+ * A separator with a {@link Separator.label label} introduces the actions after it with a
+ * non-interactive header. Menus render the label as a section header and native menus as a
+ * disabled item, while toolbars show a plain separator.
+ */
+export class Separator implements IAction {
 
 	/**
 	 * Joins all non-empty lists of actions with separators.
@@ -211,14 +235,39 @@ export class Separator extends Action {
 		return out;
 	}
 
+	/**
+	 * Removes leading, trailing, and consecutive duplicate separators in-place and returns the actions.
+	 */
+	public static clean(actions: IAction[]): IAction[] {
+		while (actions.length > 0 && actions[0].id === Separator.ID) {
+			actions.shift();
+		}
+		while (actions.length > 0 && actions[actions.length - 1].id === Separator.ID) {
+			actions.pop();
+		}
+		for (let i = actions.length - 2; i >= 0; i--) {
+			if (actions[i].id === Separator.ID && actions[i + 1].id === Separator.ID) {
+				actions.splice(i + 1, 1);
+			}
+		}
+		return actions;
+	}
+
 	static readonly ID = 'vs.actions.separator';
 
-	constructor(label?: string) {
-		super(Separator.ID, label, label ? 'separator text' : 'separator');
+	readonly id: string = Separator.ID;
 
-		this.checked = false;
-		this.enabled = false;
-	}
+	readonly tooltip: string = '';
+	readonly class: string = 'separator';
+	readonly enabled: boolean = false;
+	readonly checked: undefined = undefined;
+
+	/**
+	 * @param label An optional header shown above the actions that follow the separator.
+	 */
+	constructor(readonly label: string = '') { }
+
+	async run() { }
 }
 
 export class SubmenuAction implements IAction {
@@ -228,22 +277,17 @@ export class SubmenuAction implements IAction {
 	readonly class: string | undefined;
 	readonly tooltip: string = '';
 	readonly enabled: boolean = true;
-	readonly checked: boolean = false;
+	readonly checked: boolean | undefined;
 
 	private readonly _actions: readonly IAction[];
 	get actions(): readonly IAction[] { return this._actions; }
 
-	constructor(id: string, label: string, actions: readonly IAction[], cssClass?: string) {
+	constructor(id: string, label: string, actions: readonly IAction[], cssClass?: string, checked?: boolean) {
 		this.id = id;
 		this.label = label;
 		this.class = cssClass;
 		this._actions = actions;
-	}
-
-	dispose(): void {
-		// there is NOTHING to dispose and the SubmenuAction should
-		// never have anything to dispose as it is a convenience type
-		// to bridge into the rendering world.
+		this.checked = checked;
 	}
 
 	async run(): Promise<void> { }
@@ -258,15 +302,15 @@ export class EmptySubmenuAction extends Action {
 	}
 }
 
-export function toAction(props: { id: string, label: string, enabled?: boolean, checked?: boolean, run: Function; }): IAction {
+export function toAction(props: { id: string; label: string; tooltip?: string; enabled?: boolean; checked?: boolean; class?: string; alt?: IAction; run: Function }): IAction {
 	return {
 		id: props.id,
 		label: props.label,
-		class: undefined,
+		tooltip: props.tooltip ?? props.label,
+		class: props.class,
 		enabled: props.enabled ?? true,
-		checked: props.checked ?? false,
-		run: async () => props.run(),
-		tooltip: props.label,
-		dispose: () => { }
+		checked: props.checked,
+		...(props.alt ? { alt: props.alt } : {}),
+		run: async (...args: unknown[]) => props.run(...args),
 	};
 }

@@ -4,13 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { DocumentContext } from 'vscode-css-languageservice';
-import { endsWith, startsWith } from '../utils/strings';
+import { endsWith, startsWith } from '../utils/strings.js';
 import { WorkspaceFolder } from 'vscode-languageserver';
-import { resolvePath } from '../requests';
+import { URI, Utils } from 'vscode-uri';
 
 export function getDocumentContext(documentUri: string, workspaceFolders: WorkspaceFolder[]): DocumentContext {
 	function getRootFolder(): string | undefined {
-		for (let folder of workspaceFolders) {
+		for (const folder of workspaceFolders) {
 			let folderURI = folder.uri;
 			if (!endsWith(folderURI, '/')) {
 				folderURI = folderURI + '/';
@@ -24,15 +24,32 @@ export function getDocumentContext(documentUri: string, workspaceFolders: Worksp
 
 	return {
 		resolveReference: (ref: string, base = documentUri) => {
+			if (ref.match(/^\w[\w\d+.-]*:/)) {
+				// starts with a schema
+				return ref;
+			}
 			if (ref[0] === '/') { // resolve absolute path against the current workspace folder
-				let folderUri = getRootFolder();
+				const folderUri = getRootFolder();
 				if (folderUri) {
 					return folderUri + ref.substr(1);
 				}
 			}
-			base = base.substr(0, base.lastIndexOf('/') + 1);
-			return resolvePath(base, ref);
+			const parsedBase = URI.parse(base);
+			// URI schemes are case-insensitive, but `URI.parse` preserves their case
+			const baseUri = parsedBase.with({ scheme: parsedBase.scheme.toLowerCase() });
+			if (!isHierarchicalBase(baseUri, documentUri)) {
+				// A `<base href>` with another scheme, for example `command:`, cannot be used to
+				// resolve relative references. Doing so would give them that scheme and its query.
+				return undefined;
+			}
+			const baseUriDir = baseUri.path.endsWith('/') ? baseUri : Utils.dirname(baseUri);
+			return Utils.resolvePath(baseUriDir, ref).toString(true);
 		},
 	};
 }
 
+const hierarchicalSchemes = new Set(['http', 'https', 'file']);
+
+function isHierarchicalBase(baseUri: URI, documentUri: string): boolean {
+	return hierarchicalSchemes.has(baseUri.scheme) || baseUri.scheme === URI.parse(documentUri).scheme.toLowerCase();
+}

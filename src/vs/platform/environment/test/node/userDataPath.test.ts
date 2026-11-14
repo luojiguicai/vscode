@@ -3,32 +3,36 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as assert from 'assert';
-import { OPTIONS, parseArgs } from 'vs/platform/environment/node/argv';
-import { getUserDataPath } from 'vs/platform/environment/node/userDataPath';
+import assert from 'assert';
+import { toDisposable } from '../../../../base/common/lifecycle.js';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+import { OPTIONS, parseArgs } from '../../node/argv.js';
+import { getUserDataPath } from '../../node/userDataPath.js';
+import product from '../../../product/common/product.js';
 
 suite('User data path', () => {
 
+	const store = ensureNoDisposablesAreLeakedInTestSuite();
+
 	test('getUserDataPath - default', () => {
-		const path = getUserDataPath(parseArgs(process.argv, OPTIONS));
+		const path = getUserDataPath(parseArgs(process.argv, OPTIONS), product.nameShort);
 		assert.ok(path.length > 0);
 	});
 
 	test('getUserDataPath - portable mode', () => {
 		const origPortable = process.env['VSCODE_PORTABLE'];
-		try {
-			const portableDir = 'portable-dir';
-			process.env['VSCODE_PORTABLE'] = portableDir;
-
-			const path = getUserDataPath(parseArgs(process.argv, OPTIONS));
-			assert.ok(path.includes(portableDir));
-		} finally {
+		store.add(toDisposable(() => {
 			if (typeof origPortable === 'string') {
 				process.env['VSCODE_PORTABLE'] = origPortable;
 			} else {
 				delete process.env['VSCODE_PORTABLE'];
 			}
-		}
+		}));
+		const portableDir = 'portable-dir';
+		process.env['VSCODE_PORTABLE'] = portableDir;
+
+		const path = getUserDataPath(parseArgs(process.argv, OPTIONS), product.nameShort);
+		assert.ok(path.includes(portableDir));
 	});
 
 	test('getUserDataPath - --user-data-dir', () => {
@@ -36,24 +40,23 @@ suite('User data path', () => {
 		const args = parseArgs(process.argv, OPTIONS);
 		args['user-data-dir'] = cliUserDataDir;
 
-		const path = getUserDataPath(args);
+		const path = getUserDataPath(args, product.nameShort);
 		assert.ok(path.includes(cliUserDataDir));
 	});
 
 	test('getUserDataPath - VSCODE_APPDATA', () => {
 		const origAppData = process.env['VSCODE_APPDATA'];
-		try {
-			const appDataDir = 'appdata-dir';
-			process.env['VSCODE_APPDATA'] = appDataDir;
-
-			const path = getUserDataPath(parseArgs(process.argv, OPTIONS));
-			assert.ok(path.includes(appDataDir));
-		} finally {
+		store.add(toDisposable(() => {
 			if (typeof origAppData === 'string') {
 				process.env['VSCODE_APPDATA'] = origAppData;
 			} else {
 				delete process.env['VSCODE_APPDATA'];
 			}
-		}
+		}));
+		const appDataDir = 'appdata-dir';
+		process.env['VSCODE_APPDATA'] = appDataDir;
+
+		const path = getUserDataPath(parseArgs(process.argv, OPTIONS), product.nameShort);
+		assert.ok(path.includes(appDataDir));
 	});
 });

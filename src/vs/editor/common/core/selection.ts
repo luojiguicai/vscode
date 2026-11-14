@@ -3,8 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IPosition, Position } from 'vs/editor/common/core/position';
-import { Range } from 'vs/editor/common/core/range';
+import { IPosition, Position } from './position.js';
+import { Range } from './range.js';
 
 /**
  * A selection in the editor.
@@ -129,6 +129,13 @@ export class Selection extends Range {
 	}
 
 	/**
+	 * Get the position at the start of the selection.
+	*/
+	public getSelectionStart(): Position {
+		return new Position(this.selectionStartLineNumber, this.selectionStartColumn);
+	}
+
+	/**
 	 * Create a new selection with a different `selectionStartLineNumber` and `selectionStartColumn`.
 	 */
 	public override setStartPosition(startLineNumber: number, startColumn: number): Selection {
@@ -145,6 +152,17 @@ export class Selection extends Range {
 	 */
 	public static override fromPositions(start: IPosition, end: IPosition = start): Selection {
 		return new Selection(start.lineNumber, start.column, end.lineNumber, end.column);
+	}
+
+	/**
+	 * Creates a `Selection` from a range, given a direction.
+	 */
+	public static fromRange(range: Range, direction: SelectionDirection): Selection {
+		if (direction === SelectionDirection.LTR) {
+			return new Selection(range.startLineNumber, range.startColumn, range.endLineNumber, range.endColumn);
+		} else {
+			return new Selection(range.endLineNumber, range.endColumn, range.startLineNumber, range.startColumn);
+		}
 	}
 
 	/**
@@ -178,13 +196,13 @@ export class Selection extends Range {
 	/**
 	 * Test if `obj` is an `ISelection`.
 	 */
-	public static isISelection(obj: any): obj is ISelection {
+	public static isISelection(obj: unknown): obj is ISelection {
 		return (
-			obj
-			&& (typeof obj.selectionStartLineNumber === 'number')
-			&& (typeof obj.selectionStartColumn === 'number')
-			&& (typeof obj.positionLineNumber === 'number')
-			&& (typeof obj.positionColumn === 'number')
+			!!obj
+			&& (typeof (obj as ISelection).selectionStartLineNumber === 'number')
+			&& (typeof (obj as ISelection).selectionStartColumn === 'number')
+			&& (typeof (obj as ISelection).positionLineNumber === 'number')
+			&& (typeof (obj as ISelection).positionColumn === 'number')
 		);
 	}
 

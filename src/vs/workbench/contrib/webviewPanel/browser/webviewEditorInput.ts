@@ -3,14 +3,34 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Schemas } from 'vs/base/common/network';
-import { URI } from 'vs/base/common/uri';
-import { EditorInputCapabilities, GroupIdentifier, IEditorInput, IUntypedEditorInput, Verbosity } from 'vs/workbench/common/editor';
-import { EditorInput } from 'vs/workbench/common/editor/editorInput';
-import { WebviewOverlay } from 'vs/workbench/contrib/webview/browser/webview';
-import { WebviewIconManager, WebviewIcons } from 'vs/workbench/contrib/webviewPanel/browser/webviewIconManager';
+import { CodeWindow } from '../../../../base/browser/window.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { Schemas } from '../../../../base/common/network.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+import { URI } from '../../../../base/common/uri.js';
+import { generateUuid } from '../../../../base/common/uuid.js';
+import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import { isDark } from '../../../../platform/theme/common/theme.js';
+import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+import { EditorInputCapabilities, GroupIdentifier, IEditorPaneSelection, IUntypedEditorInput, Verbosity } from '../../../common/editor.js';
+import { EditorInput } from '../../../common/editor/editorInput.js';
+import { IOverlayWebview } from '../../webview/browser/webview.js';
+
+export interface WebviewInputInitInfo {
+	readonly viewType: string;
+	readonly providedId: string | undefined;
+	readonly name: string;
+	readonly iconPath: WebviewIconPath | undefined;
+}
 
 export class WebviewInput extends EditorInput {
+
+	public async applyOptions(_options: IEditorOptions, _token: CancellationToken): Promise<void> { }
+
+	public getSelection(): IEditorPaneSelection | undefined {
+		return undefined;
+	}
 
 	public static typeId = 'workbench.editors.webviewInput';
 
@@ -18,40 +38,57 @@ export class WebviewInput extends EditorInput {
 		return WebviewInput.typeId;
 	}
 
-	public override get capabilities(): EditorInputCapabilities {
-		return EditorInputCapabilities.Readonly | EditorInputCapabilities.Singleton;
+	public override get editorId(): string {
+		return this.viewType;
 	}
 
-	private _name: string;
-	private _iconPath?: WebviewIcons;
+	public override get capabilities(): EditorInputCapabilities {
+		return EditorInputCapabilities.Readonly | EditorInputCapabilities.Singleton | EditorInputCapabilities.CanDropIntoEditor;
+	}
+
+	private readonly _resourceId = generateUuid();
+
+	private _webviewTitle: string;
+	private _iconPath?: WebviewIconPath;
 	private _group?: GroupIdentifier;
 
-	private _webview: WebviewOverlay;
+	private _webview: IOverlayWebview;
 
-	private _hasTransfered = false;
+	private _hasTransferred = false;
 
 	get resource() {
 		return URI.from({
 			scheme: Schemas.webviewPanel,
-			path: `webview-panel/webview-${this.id}`
+			path: `webview-panel/webview-${this.providerId}-${this._resourceId}`
 		});
 	}
 
+	public readonly viewType: string;
+	public readonly providerId: string | undefined;
+
 	constructor(
-		public readonly id: string,
-		public readonly viewType: string,
-		name: string,
-		webview: WebviewOverlay,
-		private readonly _iconManager: WebviewIconManager,
+		init: WebviewInputInitInfo,
+		webview: IOverlayWebview,
+		@IThemeService private readonly _themeService: IThemeService,
 	) {
 		super();
-		this._name = name;
+
+		this.viewType = init.viewType;
+		this.providerId = init.providedId;
+
+		this._webviewTitle = init.name;
+		this._iconPath = init.iconPath;
 		this._webview = webview;
+
+		this._register(_themeService.onDidColorThemeChange(() => {
+			// Potentially update icon
+			this._onDidChangeLabel.fire();
+		}));
 	}
 
 	override dispose() {
 		if (!this.isDisposed()) {
-			if (!this._hasTransfered) {
+			if (!this._hasTransferred) {
 				this._webview?.dispose();
 			}
 		}
@@ -59,7 +96,7 @@ export class WebviewInput extends EditorInput {
 	}
 
 	public override getName(): string {
-		return this._name;
+		return this._webviewTitle;
 	}
 
 	public override getTitle(_verbosity?: Verbosity): string {
@@ -70,12 +107,17 @@ export class WebviewInput extends EditorInput {
 		return undefined;
 	}
 
-	public setName(value: string): void {
-		this._name = value;
+	public setWebviewTitle(value: string): void {
+		this._webviewTitle = value;
+		this.webview.setTitle(value);
 		this._onDidChangeLabel.fire();
 	}
 
-	public get webview(): WebviewOverlay {
+	public getWebviewTitle(): string | undefined {
+		return this._webviewTitle;
+	}
+
+	public get webview(): IOverlayWebview {
 		return this._webview;
 	}
 
@@ -83,16 +125,30 @@ export class WebviewInput extends EditorInput {
 		return this.webview.extension;
 	}
 
+	override getIcon(): URI | ThemeIcon | undefined {
+		if (!this._iconPath) {
+			return;
+		}
+
+		if (ThemeIcon.isThemeIcon(this._iconPath)) {
+			return this._iconPath;
+		}
+
+		return isDark(this._themeService.getColorTheme().type)
+			? this._iconPath.dark
+			: (this._iconPath.light ?? this._iconPath.dark);
+	}
+
 	public get iconPath() {
 		return this._iconPath;
 	}
 
-	public set iconPath(value: WebviewIcons | undefined) {
+	public set iconPath(value: WebviewIconPath | undefined) {
 		this._iconPath = value;
-		this._iconManager.setIcons(this.id, value);
+		this._onDidChangeLabel.fire();
 	}
 
-	public override matches(other: IEditorInput | IUntypedEditorInput): boolean {
+	public override matches(other: EditorInput | IUntypedEditorInput): boolean {
 		return super.matches(other) || other === this;
 	}
 
@@ -105,11 +161,19 @@ export class WebviewInput extends EditorInput {
 	}
 
 	protected transfer(other: WebviewInput): WebviewInput | undefined {
-		if (this._hasTransfered) {
+		if (this._hasTransferred) {
 			return undefined;
 		}
-		this._hasTransfered = true;
+		this._hasTransferred = true;
 		other._webview = this._webview;
 		return other;
 	}
+
+	public claim(claimant: unknown, targetWindow: CodeWindow, scopedContextKeyService: IContextKeyService | undefined): void {
+		return this._webview.claim(claimant, targetWindow, scopedContextKeyService);
+	}
 }
+export type WebviewIconPath = ThemeIcon | {
+	readonly light: URI;
+	readonly dark: URI;
+};

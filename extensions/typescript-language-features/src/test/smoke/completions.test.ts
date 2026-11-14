@@ -5,23 +5,22 @@
 
 import 'mocha';
 import * as vscode from 'vscode';
-import { disposeAll } from '../../utils/dispose';
 import { acceptFirstSuggestion, typeCommitCharacter } from '../../test/suggestTestHelpers';
-import { assertEditorContents, Config, createTestEditor, enumerateConfig, joinLines, updateConfig, VsCodeConfiguration } from '../../test/testUtils';
+import { Config, VsCodeConfiguration, assertEditorContents, createTestEditor, enumerateConfig, joinLines, updateConfig } from '../../test/testUtils';
+import { disposeAll } from '../../utils/dispose';
 
 const testDocumentUri = vscode.Uri.parse('untitled:test.ts');
 
 const insertModes = Object.freeze(['insert', 'replace']);
 
 suite.skip('TypeScript Completions', () => {
-	const configDefaults: VsCodeConfiguration = Object.freeze({
+	const configDefaults = Object.freeze<VsCodeConfiguration>({
 		[Config.autoClosingBrackets]: 'always',
-		[Config.typescriptCompleteFunctionCalls]: false,
+		[Config.completeFunctionCalls]: false,
 		[Config.insertMode]: 'insert',
 		[Config.snippetSuggestions]: 'none',
 		[Config.suggestSelection]: 'first',
-		[Config.javascriptQuoteStyle]: 'double',
-		[Config.typescriptQuoteStyle]: 'double',
+		[Config.quoteStyle]: 'double',
 	});
 
 	const _disposables: vscode.Disposable[] = [];
@@ -98,7 +97,7 @@ suite.skip('TypeScript Completions', () => {
 		});
 	});
 
-	test('Should insert backets when completing dot properties with spaces in name', async () => {
+	test('Should insert brackets when completing dot properties with spaces in name', async () => {
 		await enumerateConfig(testDocumentUri, Config.insertMode, insertModes, async config => {
 			const editor = await createTestEditor(testDocumentUri,
 				'const x = { "hello world": 1 };',
@@ -181,7 +180,7 @@ suite.skip('TypeScript Completions', () => {
 	});
 
 	test('completeFunctionCalls should complete function parameters when at end of word', async () => {
-		await updateConfig(testDocumentUri, { [Config.typescriptCompleteFunctionCalls]: true });
+		await updateConfig(testDocumentUri, { [Config.completeFunctionCalls]: true });
 
 		// Complete with-in word
 		const editor = await createTestEditor(testDocumentUri,
@@ -199,7 +198,7 @@ suite.skip('TypeScript Completions', () => {
 	});
 
 	test.skip('completeFunctionCalls should complete function parameters when within word', async () => {
-		await updateConfig(testDocumentUri, { [Config.typescriptCompleteFunctionCalls]: true });
+		await updateConfig(testDocumentUri, { [Config.completeFunctionCalls]: true });
 
 		const editor = await createTestEditor(testDocumentUri,
 			`function abcdef(x, y, z) { }`,
@@ -216,7 +215,7 @@ suite.skip('TypeScript Completions', () => {
 	});
 
 	test('completeFunctionCalls should not complete function parameters at end of word if we are already in something that looks like a function call, #18131', async () => {
-		await updateConfig(testDocumentUri, { [Config.typescriptCompleteFunctionCalls]: true });
+		await updateConfig(testDocumentUri, { [Config.completeFunctionCalls]: true });
 
 		const editor = await createTestEditor(testDocumentUri,
 			`function abcdef(x, y, z) { }`,
@@ -233,7 +232,7 @@ suite.skip('TypeScript Completions', () => {
 	});
 
 	test.skip('completeFunctionCalls should not complete function parameters within word if we are already in something that looks like a function call, #18131', async () => {
-		await updateConfig(testDocumentUri, { [Config.typescriptCompleteFunctionCalls]: true });
+		await updateConfig(testDocumentUri, { [Config.completeFunctionCalls]: true });
 
 		const editor = await createTestEditor(testDocumentUri,
 			`function abcdef(x, y, z) { }`,

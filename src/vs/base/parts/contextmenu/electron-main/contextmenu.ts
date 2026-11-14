@@ -3,16 +3,15 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Menu, MenuItem, BrowserWindow, ipcMain, IpcMainEvent } from 'electron';
-import { ISerializableContextMenuItem, CONTEXT_MENU_CLOSE_CHANNEL, CONTEXT_MENU_CHANNEL, IPopupOptions } from 'vs/base/parts/contextmenu/common/contextmenu';
-import { withNullAsUndefined } from 'vs/base/common/types';
+import { IpcMainEvent, Menu, MenuItem } from 'electron';
+import { validatedIpcMain } from '../../ipc/electron-main/ipcMain.js';
+import { CONTEXT_MENU_CHANNEL, CONTEXT_MENU_CLOSE_CHANNEL, IPopupOptions, ISerializableContextMenuItem } from '../common/contextmenu.js';
 
 export function registerContextMenuListener(): void {
-	ipcMain.on(CONTEXT_MENU_CHANNEL, (event: IpcMainEvent, contextMenuId: number, items: ISerializableContextMenuItem[], onClickChannel: string, options?: IPopupOptions) => {
+	validatedIpcMain.on(CONTEXT_MENU_CHANNEL, (event: IpcMainEvent, contextMenuId: number, items: ISerializableContextMenuItem[], onClickChannel: string, options?: IPopupOptions) => {
 		const menu = createMenu(event, onClickChannel, items);
 
 		menu.popup({
-			window: withNullAsUndefined(BrowserWindow.fromWebContents(event.sender)),
 			x: options ? options.x : undefined,
 			y: options ? options.y : undefined,
 			positioningItem: options ? options.positioningItem : undefined,
@@ -21,6 +20,8 @@ export function registerContextMenuListener(): void {
 				// It turns out that the menu gets GC'ed if not referenced anymore
 				// As such we drag it into this scope so that it is not being GC'ed
 				if (menu) {
+					// Complete the one-shot click listener even when no item was selected.
+					event.sender.send(onClickChannel, -1);
 					event.sender.send(CONTEXT_MENU_CLOSE_CHANNEL, contextMenuId);
 				}
 			}

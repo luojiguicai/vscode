@@ -3,24 +3,41 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { URI } from 'vs/base/common/uri';
-import { Event } from 'vs/base/common/event';
-import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
-import { localize } from 'vs/nls';
-import Severity from 'vs/base/common/severity';
+import { Event } from '../../../base/common/event.js';
+import { IDisposable } from '../../../base/common/lifecycle.js';
+import Severity from '../../../base/common/severity.js';
+import { URI } from '../../../base/common/uri.js';
+import { localize } from '../../../nls.js';
+import { createDecorator } from '../../instantiation/common/instantiation.js';
+
+export interface IMarkerReadOptions {
+	owner?: string;
+	resource?: URI;
+	severities?: number;
+	take?: number;
+	ignoreResourceFilters?: boolean;
+}
+
+export interface IMarkerChangeOptions {
+	readonly isTruncated?: boolean;
+}
 
 export interface IMarkerService {
 	readonly _serviceBrand: undefined;
 
 	getStatistics(): MarkerStatistics;
 
-	changeOne(owner: string, resource: URI, markers: IMarkerData[]): void;
+	isSourceTruncated(resource: URI): boolean;
+
+	changeOne(owner: string, resource: URI, markers: IMarkerData[], options?: IMarkerChangeOptions): void;
 
 	changeAll(owner: string, data: IResourceMarker[]): void;
 
 	remove(owner: string, resources: URI[]): void;
 
-	read(filter?: { owner?: string; resource?: URI; severities?: number, take?: number; }): IMarker[];
+	read(filter?: IMarkerReadOptions): IMarker[];
+
+	installResourceFilter(resource: URI, reason: string): IDisposable;
 
 	readonly onMarkerChanged: Event<readonly URI[]>;
 }
@@ -55,13 +72,22 @@ export namespace MarkerSeverity {
 		return b - a;
 	}
 
-	const _displayStrings: { [value: number]: string; } = Object.create(null);
+	const _displayStrings: { [value: number]: string } = Object.create(null);
 	_displayStrings[MarkerSeverity.Error] = localize('sev.error', "Error");
 	_displayStrings[MarkerSeverity.Warning] = localize('sev.warning', "Warning");
 	_displayStrings[MarkerSeverity.Info] = localize('sev.info', "Info");
 
 	export function toString(a: MarkerSeverity): string {
 		return _displayStrings[a] || '';
+	}
+
+	const _displayStringsPlural: { [value: number]: string } = Object.create(null);
+	_displayStringsPlural[MarkerSeverity.Error] = localize('sev.errors', "Errors");
+	_displayStringsPlural[MarkerSeverity.Warning] = localize('sev.warnings', "Warnings");
+	_displayStringsPlural[MarkerSeverity.Info] = localize('sev.infos', "Infos");
+
+	export function toStringPlural(a: MarkerSeverity): string {
+		return _displayStringsPlural[a] || '';
 	}
 
 	export function fromSeverity(severity: Severity): MarkerSeverity {
@@ -95,8 +121,10 @@ export interface IMarkerData {
 	startColumn: number;
 	endLineNumber: number;
 	endColumn: number;
+	modelVersionId?: number;
 	relatedInformation?: IRelatedInformation[];
 	tags?: MarkerTag[];
+	origin?: string | undefined;
 }
 
 export interface IResourceMarker {
@@ -115,8 +143,10 @@ export interface IMarker {
 	startColumn: number;
 	endLineNumber: number;
 	endColumn: number;
+	modelVersionId?: number;
 	relatedInformation?: IRelatedInformation[];
 	tags?: MarkerTag[];
+	origin?: string | undefined;
 }
 
 export interface MarkerStatistics {
@@ -133,7 +163,7 @@ export namespace IMarkerData {
 	}
 
 	export function makeKeyOptionalMessage(markerData: IMarkerData, useMessage: boolean): string {
-		let result: string[] = [emptyString];
+		const result: string[] = [emptyString];
 		if (markerData.source) {
 			result.push(markerData.source.replace('¦', '\\¦'));
 		} else {

@@ -3,48 +3,103 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { VSBuffer } from 'vs/base/common/buffer';
-import { IReference } from 'vs/base/common/lifecycle';
-import { Schemas } from 'vs/base/common/network';
-import { basename } from 'vs/base/common/path';
-import { dirname, isEqual } from 'vs/base/common/resources';
-import { assertIsDefined } from 'vs/base/common/types';
-import { URI } from 'vs/base/common/uri';
-import { generateUuid } from 'vs/base/common/uuid';
-import { IFileDialogService } from 'vs/platform/dialogs/common/dialogs';
-import { IResourceEditorInput } from 'vs/platform/editor/common/editor';
-import { FileSystemProviderCapabilities, IFileService } from 'vs/platform/files/common/files';
-import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
-import { ILabelService } from 'vs/platform/label/common/label';
-import { IUndoRedoService } from 'vs/platform/undoRedo/common/undoRedo';
-import { EditorInputCapabilities, GroupIdentifier, IEditorInput, IRevertOptions, ISaveOptions, IUntypedEditorInput, UntypedEditorContext, Verbosity } from 'vs/workbench/common/editor';
-import { decorateFileEditorLabel } from 'vs/workbench/common/editor/resourceEditorInput';
-import { defaultCustomEditor } from 'vs/workbench/contrib/customEditor/common/contributedCustomEditors';
-import { ICustomEditorModel, ICustomEditorService } from 'vs/workbench/contrib/customEditor/common/customEditor';
-import { IWebviewService, WebviewOverlay } from 'vs/workbench/contrib/webview/browser/webview';
-import { IWebviewWorkbenchService, LazilyResolvedWebviewEditorInput } from 'vs/workbench/contrib/webviewPanel/browser/webviewWorkbenchService';
-import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
-import { IUntitledTextEditorService } from 'vs/workbench/services/untitled/common/untitledTextEditorService';
+import { getWindow } from '../../../../base/browser/dom.js';
+import { CodeWindow } from '../../../../base/browser/window.js';
+import { toAction } from '../../../../base/common/actions.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
+import { IMarkdownString } from '../../../../base/common/htmlContent.js';
+import { IReference } from '../../../../base/common/lifecycle.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { Emitter } from '../../../../base/common/event.js';
+import { Range } from '../../../../editor/common/core/range.js';
+import { Selection, SelectionDirection } from '../../../../editor/common/core/selection.js';
+import { Schemas } from '../../../../base/common/network.js';
+import { basename } from '../../../../base/common/path.js';
+import { dirname, isEqual } from '../../../../base/common/resources.js';
+import { assertReturnsDefined } from '../../../../base/common/types.js';
+import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
+import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IResourceEditorInput, ITextEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { ILabelService } from '../../../../platform/label/common/label.js';
+import { IUndoRedoService } from '../../../../platform/undoRedo/common/undoRedo.js';
+import { EditorInputCapabilities, GroupIdentifier, IMoveResult, IRevertOptions, ISaveOptions, IUntypedEditorInput, Verbosity, createEditorOpenError } from '../../../common/editor.js';
+import { EditorInput } from '../../../common/editor/editorInput.js';
+import { ICustomEditorLabelService } from '../../../services/editor/common/customEditorLabelService.js';
+import { ICustomEditorModel, ICustomEditorService } from '../common/customEditor.js';
+import { IOverlayWebview, IWebviewService } from '../../webview/browser/webview.js';
+import { IWebviewWorkbenchService, LazilyResolvedWebviewEditorInput } from '../../webviewPanel/browser/webviewWorkbenchService.js';
+import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
+import { IFilesConfigurationService } from '../../../services/filesConfiguration/common/filesConfigurationService.js';
+import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
+import { IUntitledTextEditorService } from '../../../services/untitled/common/untitledTextEditorService.js';
+import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+import { WebviewIconPath } from '../../webviewPanel/browser/webviewEditorInput.js';
+import { ICustomTextEditorNavigation } from '../common/customTextEditorNavigation.js';
+import { TextEditorPaneSelection } from '../../../browser/parts/editor/textEditor.js';
+
+interface CustomEditorInputInitInfo {
+	readonly resource: URI;
+	readonly viewType: string;
+	readonly webviewTitle: string | undefined;
+	readonly preferredName: string | undefined;
+	readonly iconPath: WebviewIconPath | undefined;
+}
 
 export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 
+	private readonly _onDidChangeNavigation = this._register(new Emitter<void>());
+	readonly onDidChangeNavigation = this._onDidChangeNavigation.event;
+	private _navigation: ICustomTextEditorNavigation | undefined;
+
+	get navigation(): ICustomTextEditorNavigation | undefined {
+		return this._navigation;
+	}
+
+	set navigation(value: ICustomTextEditorNavigation | undefined) {
+		if (this._navigation !== value) {
+			this._navigation = value;
+			this._onDidChangeNavigation.fire();
+		}
+	}
+
+	override getSelection(): TextEditorPaneSelection | undefined {
+		const selection = this.navigation?.selection;
+		return selection ? new TextEditorPaneSelection(Selection.liftSelection(selection)) : undefined;
+	}
+
+	public override async applyOptions(options: ITextEditorOptions, token: CancellationToken): Promise<void> {
+		const selection = options.selection;
+		if (this.navigation && selection && !token.isCancellationRequested) {
+			const range = new Range(selection.startLineNumber, selection.startColumn, selection.endLineNumber ?? selection.startLineNumber, selection.endColumn ?? selection.startColumn);
+			await this.navigation.revealRange(range, Selection.fromRange(range, SelectionDirection.LTR), !!options.preserveFocus, token);
+		}
+	}
+
 	static create(
 		instantiationService: IInstantiationService,
-		resource: URI,
-		viewType: string,
+		init: CustomEditorInputInitInfo,
 		group: GroupIdentifier | undefined,
-		options?: { readonly customClasses?: string, readonly oldResource?: URI },
-	): IEditorInput {
+		options?: { readonly customClasses?: string; readonly oldResource?: URI },
+	): EditorInput {
 		return instantiationService.invokeFunction(accessor => {
-			if (viewType === defaultCustomEditor.id) {
-				return accessor.get(IEditorService).createEditorInput({ resource, forceFile: true });
-			}
 			// If it's an untitled file we must populate the untitledDocumentData
-			const untitledString = accessor.get(IUntitledTextEditorService).getValue(resource);
-			let untitledDocumentData = untitledString ? VSBuffer.fromString(untitledString) : undefined;
-			const id = generateUuid();
-			const webview = accessor.get(IWebviewService).createWebviewOverlay(id, { customClasses: options?.customClasses }, {}, undefined);
-			const input = instantiationService.createInstance(CustomEditorInput, resource, viewType, id, webview, { untitledDocumentData: untitledDocumentData, oldResource: options?.oldResource });
+			const untitledTextEditorService = accessor.get(IUntitledTextEditorService);
+			const untitledTextModel = untitledTextEditorService.get(init.resource);
+			const untitledString = untitledTextModel?.textEditorModel?.getValue();
+			const untitledDocumentData = untitledString ? VSBuffer.fromString(untitledString) : undefined;
+
+			const webview = accessor.get(IWebviewService).createWebviewOverlay({
+				providedViewType: init.viewType,
+				title: init.webviewTitle,
+				options: { customClasses: options?.customClasses },
+				contentOptions: {},
+				extension: undefined,
+			});
+			const input = instantiationService.createInstance(CustomEditorInput, init, webview, { untitledDocumentData: untitledDocumentData, oldResource: options?.oldResource });
 			if (typeof group !== 'undefined') {
 				input.updateGroup(group);
 			}
@@ -58,6 +113,8 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 	public readonly oldResource?: URI;
 	private _defaultDirtyState: boolean | undefined;
 
+	private _editorName: string | undefined = undefined;
+
 	private readonly _backupId: string | undefined;
 
 	private readonly _untitledDocumentData: VSBuffer | undefined;
@@ -67,22 +124,24 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 	private _modelRef?: IReference<ICustomEditorModel>;
 
 	constructor(
-		resource: URI,
-		viewType: string,
-		id: string,
-		webview: WebviewOverlay,
-		options: { startsDirty?: boolean, backupId?: string, untitledDocumentData?: VSBuffer, readonly oldResource?: URI },
+		init: CustomEditorInputInitInfo,
+		webview: IOverlayWebview,
+		options: { startsDirty?: boolean; backupId?: string; untitledDocumentData?: VSBuffer; readonly oldResource?: URI },
+		@IThemeService themeService: IThemeService,
 		@IWebviewWorkbenchService webviewWorkbenchService: IWebviewWorkbenchService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ILabelService private readonly labelService: ILabelService,
 		@ICustomEditorService private readonly customEditorService: ICustomEditorService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
-		@IEditorService private readonly editorService: IEditorService,
 		@IUndoRedoService private readonly undoRedoService: IUndoRedoService,
-		@IFileService private readonly fileService: IFileService
+		@IFileService private readonly fileService: IFileService,
+		@IFilesConfigurationService private readonly filesConfigurationService: IFilesConfigurationService,
+		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
+		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@ICustomEditorLabelService private readonly customEditorLabelService: ICustomEditorLabelService,
 	) {
-		super(id, viewType, '', webview, webviewWorkbenchService);
-		this._editorResource = resource;
+		super({ providedId: init.viewType, viewType: init.viewType, name: init.preferredName ?? '', iconPath: init.iconPath }, webview, themeService, webviewWorkbenchService);
+		this._editorResource = init.resource;
 		this.oldResource = options.oldResource;
 		this._defaultDirtyState = options.startsDirty;
 		this._backupId = options.backupId;
@@ -92,11 +151,12 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 	}
 
 	private registerListeners(): void {
-
 		// Clear our labels on certain label related events
 		this._register(this.labelService.onDidChangeFormatters(e => this.onLabelEvent(e.scheme)));
 		this._register(this.fileService.onDidChangeFileSystemProviderRegistrations(e => this.onLabelEvent(e.scheme)));
 		this._register(this.fileService.onDidChangeFileSystemProviderCapabilities(e => this.onLabelEvent(e.scheme)));
+		this._register(this.customEditorLabelService.onDidChange(() => this.updateLabel()));
+		this._register(this.filesConfigurationService.onDidChangeReadonly(() => this._onDidChangeCapabilities.fire()));
 	}
 
 	private onLabelEvent(scheme: string): void {
@@ -108,6 +168,7 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 	private updateLabel(): void {
 
 		// Clear any cached labels from before
+		this._editorName = undefined;
 		this._shortDescription = undefined;
 		this._mediumDescription = undefined;
 		this._longDescription = undefined;
@@ -130,18 +191,14 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 	public override get capabilities(): EditorInputCapabilities {
 		let capabilities = EditorInputCapabilities.None;
 
+		capabilities |= EditorInputCapabilities.CanDropIntoEditor;
+
 		if (!this.customEditorService.getCustomEditorCapabilities(this.viewType)?.supportsMultipleEditorsPerDocument) {
 			capabilities |= EditorInputCapabilities.Singleton;
 		}
 
-		if (this._modelRef) {
-			if (this._modelRef.object.isReadonly()) {
-				capabilities |= EditorInputCapabilities.Readonly;
-			}
-		} else {
-			if (this.fileService.hasCapability(this.resource, FileSystemProviderCapabilities.Readonly)) {
-				capabilities |= EditorInputCapabilities.Readonly;
-			}
+		if (this.isReadonly()) {
+			capabilities |= EditorInputCapabilities.Readonly;
 		}
 
 		if (this.resource.scheme === Schemas.untitled) {
@@ -152,8 +209,13 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 	}
 
 	override getName(): string {
-		const name = basename(this.labelService.getUriLabel(this.resource));
-		return this.decorateLabel(name);
+		const customTitle = this.getWebviewTitle();
+		if (customTitle) {
+			return customTitle;
+		}
+
+		this._editorName ??= this.customEditorLabelService.getName(this.resource) ?? basename(this.labelService.getUriLabel(this.resource));
+		return this._editorName;
 	}
 
 	override getDescription(verbosity = Verbosity.MEDIUM): string | undefined {
@@ -170,78 +232,58 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 
 	private _shortDescription: string | undefined = undefined;
 	private get shortDescription(): string {
-		if (typeof this._shortDescription !== 'string') {
-			this._shortDescription = this.labelService.getUriBasenameLabel(dirname(this.resource));
-		}
-
+		this._shortDescription ??= this.labelService.getUriBasenameLabel(dirname(this.resource));
 		return this._shortDescription;
 	}
 
 	private _mediumDescription: string | undefined = undefined;
 	private get mediumDescription(): string {
-		if (typeof this._mediumDescription !== 'string') {
-			this._mediumDescription = this.labelService.getUriLabel(dirname(this.resource), { relative: true });
-		}
-
+		this._mediumDescription ??= this.labelService.getUriLabel(dirname(this.resource), { relative: true });
 		return this._mediumDescription;
 	}
 
 	private _longDescription: string | undefined = undefined;
 	private get longDescription(): string {
-		if (typeof this._longDescription !== 'string') {
-			this._longDescription = this.labelService.getUriLabel(dirname(this.resource));
-		}
-
+		this._longDescription ??= this.labelService.getUriLabel(dirname(this.resource));
 		return this._longDescription;
 	}
 
 	private _shortTitle: string | undefined = undefined;
 	private get shortTitle(): string {
-		if (typeof this._shortTitle !== 'string') {
-			this._shortTitle = this.getName();
-		}
-
+		this._shortTitle ??= this.getName();
 		return this._shortTitle;
 	}
 
 	private _mediumTitle: string | undefined = undefined;
 	private get mediumTitle(): string {
-		if (typeof this._mediumTitle !== 'string') {
-			this._mediumTitle = this.labelService.getUriLabel(this.resource, { relative: true });
-		}
-
+		this._mediumTitle ??= this.labelService.getUriLabel(this.resource, { relative: true });
 		return this._mediumTitle;
 	}
 
 	private _longTitle: string | undefined = undefined;
 	private get longTitle(): string {
-		if (typeof this._longTitle !== 'string') {
-			this._longTitle = this.labelService.getUriLabel(this.resource);
-		}
-
+		this._longTitle ??= this.labelService.getUriLabel(this.resource);
 		return this._longTitle;
 	}
 
 	override getTitle(verbosity?: Verbosity): string {
+		const customTitle = this.getWebviewTitle();
+		if (customTitle) {
+			return customTitle;
+		}
+
 		switch (verbosity) {
 			case Verbosity.SHORT:
-				return this.decorateLabel(this.shortTitle);
+				return this.shortTitle;
 			case Verbosity.LONG:
-				return this.decorateLabel(this.longTitle);
+				return this.longTitle;
 			default:
 			case Verbosity.MEDIUM:
-				return this.decorateLabel(this.mediumTitle);
+				return this.mediumTitle;
 		}
 	}
 
-	private decorateLabel(label: string): string {
-		const readonly = this.hasCapability(EditorInputCapabilities.Readonly);
-		const orphaned = !!this._modelRef?.object.isOrphaned();
-
-		return decorateFileEditorLabel(label, { orphaned, readonly });
-	}
-
-	public override matches(other: IEditorInput | IUntypedEditorInput): boolean {
+	public override matches(other: EditorInput | IUntypedEditorInput): boolean {
 		if (super.matches(other)) {
 			return true;
 		}
@@ -250,8 +292,18 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 			&& isEqual(this.resource, other.resource));
 	}
 
-	public override copy(): IEditorInput {
-		return CustomEditorInput.create(this.instantiationService, this.resource, this.viewType, this.group, this.webview.options);
+	public override copy(): EditorInput {
+		return CustomEditorInput.create(this.instantiationService,
+			{ resource: this.resource, viewType: this.viewType, webviewTitle: this.getWebviewTitle(), preferredName: undefined, iconPath: this.iconPath, },
+			this.group,
+			this.webview.options);
+	}
+
+	public override isReadonly(): boolean | IMarkdownString {
+		if (!this._modelRef) {
+			return this.filesConfigurationService.isReadonly(this.resource);
+		}
+		return this._modelRef.object.isReadonly();
 	}
 
 	public override isDirty(): boolean {
@@ -261,7 +313,7 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 		return this._modelRef.object.isDirty();
 	}
 
-	public override async save(groupId: GroupIdentifier, options?: ISaveOptions): Promise<IEditorInput | undefined> {
+	public override async save(groupId: GroupIdentifier, options?: ISaveOptions): Promise<EditorInput | IUntypedEditorInput | undefined> {
 		if (!this._modelRef) {
 			return undefined;
 		}
@@ -271,14 +323,15 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 			return undefined; // save cancelled
 		}
 
+		// Different URIs == untyped input returned to allow resolver to possibly resolve to a different editor type
 		if (!isEqual(target, this.resource)) {
-			return CustomEditorInput.create(this.instantiationService, target, this.viewType, groupId);
+			return { resource: target };
 		}
 
 		return this;
 	}
 
-	public override async saveAs(groupId: GroupIdentifier, options?: ISaveOptions): Promise<IEditorInput | undefined> {
+	public override async saveAs(groupId: GroupIdentifier, options?: ISaveOptions): Promise<EditorInput | IUntypedEditorInput | undefined> {
 		if (!this._modelRef) {
 			return undefined;
 		}
@@ -293,7 +346,7 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 			return undefined;
 		}
 
-		return this.rename(groupId, target)?.editor;
+		return (await this.rename(groupId, target))?.editor;
 	}
 
 	public override async revert(group: GroupIdentifier, options?: IRevertOptions): Promise<void> {
@@ -313,9 +366,8 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 
 		if (!this._modelRef) {
 			const oldCapabilities = this.capabilities;
-			this._modelRef = this._register(assertIsDefined(await this.customEditorService.models.tryRetain(this.resource, this.viewType)));
+			this._modelRef = this._register(assertReturnsDefined(await this.customEditorService.models.tryRetain(this.resource, this.viewType)));
 			this._register(this._modelRef.object.onDidChangeDirty(() => this._onDidChangeDirty.fire()));
-			this._register(this._modelRef.object.onDidChangeOrphaned(() => this._onDidChangeLabel.fire()));
 			this._register(this._modelRef.object.onDidChangeReadonly(() => this._onDidChangeCapabilities.fire()));
 			// If we're loading untitled file data we should ensure it's dirty
 			if (this._untitledDocumentData) {
@@ -332,40 +384,18 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 		return null;
 	}
 
-	public override rename(group: GroupIdentifier, newResource: URI): { editor: IEditorInput } | undefined {
-		// See if we can keep using the same custom editor provider
-		const editorInfo = this.customEditorService.getCustomEditor(this.viewType);
-		if (editorInfo?.matches(newResource)) {
-			return { editor: this.doMove(group, newResource) };
-		}
-
-		return { editor: this.editorService.createEditorInput({ resource: newResource, forceFile: true }) };
-	}
-
-	private doMove(group: GroupIdentifier, newResource: URI): IEditorInput {
-		if (!this._moveHandler) {
-			return CustomEditorInput.create(this.instantiationService, newResource, this.viewType, group, { oldResource: this.resource });
-		}
-
-		this._moveHandler(newResource);
-		const newEditor = this.instantiationService.createInstance(CustomEditorInput,
-			newResource,
-			this.viewType,
-			this.id,
-			undefined!,  // this webview is replaced in the transfer call
-			{ startsDirty: this._defaultDirtyState, backupId: this._backupId });
-		this.transfer(newEditor);
-		newEditor.updateGroup(group);
-		return newEditor;
+	public override async rename(group: GroupIdentifier, newResource: URI): Promise<IMoveResult | undefined> {
+		// We return an untyped editor input which can then be resolved in the editor service
+		return { editor: { resource: newResource } };
 	}
 
 	public undo(): void | Promise<void> {
-		assertIsDefined(this._modelRef);
+		assertReturnsDefined(this._modelRef);
 		return this.undoRedoService.undo(this.resource);
 	}
 
 	public redo(): void | Promise<void> {
-		assertIsDefined(this._modelRef);
+		assertReturnsDefined(this._modelRef);
 		return this.undoRedoService.redo(this.resource);
 	}
 
@@ -397,7 +427,7 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 		return this._untitledDocumentData;
 	}
 
-	public override toUntyped(group: GroupIdentifier | undefined, context: UntypedEditorContext): IResourceEditorInput {
+	public override toUntyped(): IResourceEditorInput {
 		return {
 			resource: this.resource,
 			options: {
@@ -405,4 +435,61 @@ export class CustomEditorInput extends LazilyResolvedWebviewEditorInput {
 			}
 		};
 	}
+
+	public override claim(claimant: unknown, targetWindow: CodeWindow, scopedContextKeyService: IContextKeyService | undefined): void {
+		if (this.doCanMove(targetWindow.vscodeWindowId) !== true) {
+			throw createEditorOpenError(localize('editorUnsupportedInWindow', "Unable to open the editor in this window, it contains modifications that can only be saved in the original window."), [
+				toAction({
+					id: 'openInOriginalWindow',
+					label: localize('reopenInOriginalWindow', "Open in Original Window"),
+					run: async () => {
+						const originalPart = this.editorGroupsService.getPart(this.layoutService.getContainer(getWindow(this.webview.container).window));
+						const currentPart = this.editorGroupsService.getPart(this.layoutService.getContainer(targetWindow.window));
+						currentPart.activeGroup.moveEditor(this, originalPart.activeGroup);
+					}
+				})
+			], { forceMessage: true });
+		}
+		return super.claim(claimant, targetWindow, scopedContextKeyService);
+	}
+
+	public override canMove(sourceGroup: GroupIdentifier, targetGroup: GroupIdentifier): true | string {
+		const resolvedTargetGroup = this.editorGroupsService.getGroup(targetGroup);
+		if (resolvedTargetGroup) {
+			const canMove = this.doCanMove(resolvedTargetGroup.windowId);
+			if (typeof canMove === 'string') {
+				return canMove;
+			}
+		}
+
+		return super.canMove(sourceGroup, targetGroup);
+	}
+
+	public override canMoveToNewWindow(_sourceGroup: GroupIdentifier): true | string {
+		// A new window is never the window the editor is in
+		return this.doCanMove(undefined);
+	}
+
+	/** Whether the editor can move into the window `targetWindowId`; `undefined` for a window not created yet. */
+	private doCanMove(targetWindowId: number | undefined): true | string {
+		return getCustomEditorWindowMoveVeto({
+			getName: () => this.getName(),
+			modified: this.isModified(),
+			canHotExit: this._modelRef?.object.canHotExit,
+			isSameWindow: () => getWindow(this.webview.container).vscodeWindowId === targetWindowId,
+		});
+	}
+}
+
+/**
+ * Whether a custom editor can move into another window. A modified one whose model cannot hot exit (not backed by a
+ * file and without a backup) cannot: its modified state is assumed to live in the webview the extension manages, which
+ * moving to another window would lose.
+ */
+export function getCustomEditorWindowMoveVeto(editor: { readonly modified: boolean; readonly canHotExit: boolean | undefined; isSameWindow(): boolean; getName(): string }): true | string {
+	if (editor.modified && editor.canHotExit === false && !editor.isSameWindow()) {
+		return localize('editorCannotMove', "Unable to move '{0}': The editor contains changes that can only be saved in its current window.", editor.getName());
+	}
+
+	return true;
 }

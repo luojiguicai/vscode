@@ -2,7 +2,7 @@
   "name": "emmet",
   "displayName": "Emmet",
   "description": "%description%",
-  "version": "1.0.0",
+  "version": "10.0.0",
   "publisher": "vscode",
   "license": "MIT",
   "engines": {
@@ -17,12 +17,8 @@
     "url": "https://github.com/microsoft/vscode.git"
   },
   "activationEvents": [
-    "onStartupFinished",
     "onCommand:emmet.expandAbbreviation",
-    "onLanguage:html",
-    "onLanguage:css",
-    "onLanguage:scss",
-    "onLanguage:less"
+    "onLanguage"
   ],
   "main": "./out/node/emmetNodeMain",
   "browser": "./dist/browser/emmetBrowserMain",
@@ -46,6 +42,7 @@
         "emmet.showAbbreviationSuggestions": {
           "type": "boolean",
           "default": true,
+          "scope": "language-overridable",
           "markdownDescription": "%emmetShowAbbreviationSuggestions%"
         },
         "emmet.includeLanguages": {
@@ -68,6 +65,9 @@
               "default": "UTF-8"
             }
           },
+          "additionalProperties": {
+            "type": "string"
+          },
           "default": {},
           "markdownDescription": "%emmetVariables%"
         },
@@ -78,6 +78,9 @@
         },
         "emmet.excludeLanguages": {
           "type": "array",
+          "items": {
+            "type": "string"
+          },
           "default": [
             "markdown"
           ],
@@ -90,12 +93,19 @@
             "markdownDescription": "%emmetExtensionsPathItem%"
           },
           "default": [],
+          "scope": "machine-overridable",
           "markdownDescription": "%emmetExtensionsPath%"
         },
         "emmet.triggerExpansionOnTab": {
           "type": "boolean",
           "default": false,
+          "scope": "language-overridable",
           "markdownDescription": "%emmetTriggerExpansionOnTab%"
+        },
+        "emmet.useInlineCompletions": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "%emmetUseInlineCompletions%"
         },
         "emmet.preferences": {
           "type": "object",
@@ -373,90 +383,119 @@
     "menus": {
       "commandPalette": [
         {
-          "command": "editor.emmet.action.wrapWithAbbreviation"
+          "command": "editor.emmet.action.wrapWithAbbreviation",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.removeTag"
+          "command": "editor.emmet.action.removeTag",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.updateTag"
+          "command": "editor.emmet.action.updateTag",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.matchTag"
+          "command": "editor.emmet.action.matchTag",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.balanceIn"
+          "command": "editor.emmet.action.balanceIn",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.balanceOut"
+          "command": "editor.emmet.action.balanceOut",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.prevEditPoint"
+          "command": "editor.emmet.action.prevEditPoint",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.nextEditPoint"
+          "command": "editor.emmet.action.nextEditPoint",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.mergeLines"
+          "command": "editor.emmet.action.mergeLines",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.selectPrevItem"
+          "command": "editor.emmet.action.selectPrevItem",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.selectNextItem"
+          "command": "editor.emmet.action.selectNextItem",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.splitJoinTag"
+          "command": "editor.emmet.action.splitJoinTag",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.toggleComment"
+          "command": "editor.emmet.action.toggleComment",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.evaluateMathExpression"
+          "command": "editor.emmet.action.evaluateMathExpression",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
           "command": "editor.emmet.action.updateImageSize",
-          "when": "resourceScheme =~ /^file$/"
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.incrementNumberByOneTenth"
+          "command": "editor.emmet.action.incrementNumberByOneTenth",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.incrementNumberByOne"
+          "command": "editor.emmet.action.incrementNumberByOne",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.incrementNumberByTen"
+          "command": "editor.emmet.action.incrementNumberByTen",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.decrementNumberByOneTenth"
+          "command": "editor.emmet.action.decrementNumberByOneTenth",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.decrementNumberByOne"
+          "command": "editor.emmet.action.decrementNumberByOne",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.decrementNumberByTen"
+          "command": "editor.emmet.action.decrementNumberByTen",
+          "when": "activeEditor && !activeEditorIsReadonly"
         },
         {
-          "command": "editor.emmet.action.reflectCSSValue"
+          "command": "editor.emmet.action.reflectCSSValue",
+          "when": "activeEditor && !activeEditorIsReadonly"
         }
       ]
     }
   },
   "scripts": {
-    "watch": "gulp watch-extension:emmet",
     "compile": "gulp compile-extension:emmet",
-    "deps": "yarn add vscode-emmet-helper"
+    "watch": "gulp watch-extension:emmet",
+    "compile-web": "npm-run-all2 -lp bundle-web typecheck-web",
+    "bundle-web": "node ./esbuild.browser.mts",
+    "typecheck-web": "node ../../node_modules/@typescript/native/lib/tsc.js --project ./tsconfig.browser.json --noEmit",
+    "watch-web": "npm-run-all2 -lp watch-bundle-web watch-typecheck-web",
+    "watch-bundle-web": "node ./esbuild.browser.mts --watch",
+    "watch-typecheck-web": "node ../../node_modules/@typescript/native/lib/tsc.js --project ./tsconfig.browser.json --noEmit --watch",
+    "deps": "pnpm add @vscode/emmet-helper"
   },
   "devDependencies": {
-    "@types/node": "14.x"
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "mocha": "^10.8.2",
+    "util": "^0.12.4"
   },
   "dependencies": {
-    "@emmetio/abbreviation": "^2.2.0",
-    "@emmetio/css-parser": "ramya-rao-a/css-parser#vscode",
+    "@emmetio/css-parser": "^0.4.1",
     "@emmetio/html-matcher": "^0.3.3",
-    "@emmetio/math-expression": "^1.0.4",
-    "image-size": "^0.5.2",
-    "vscode-emmet-helper": "^2.3.0",
+    "@emmetio/math-expression": "^1.0.5",
+    "@vscode/emmet-helper": "^2.8.8",
+    "image-size": "~1.0.0",
     "vscode-languageserver-textdocument": "^1.0.1"
   },
   "capabilities": {

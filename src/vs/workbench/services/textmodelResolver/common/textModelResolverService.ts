@@ -3,26 +3,29 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { URI } from 'vs/base/common/uri';
-import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
-import { ITextModel } from 'vs/editor/common/model';
-import { IDisposable, toDisposable, IReference, ReferenceCollection, Disposable, AsyncReferenceCollection } from 'vs/base/common/lifecycle';
-import { IModelService } from 'vs/editor/common/services/modelService';
-import { TextResourceEditorModel } from 'vs/workbench/common/editor/textResourceEditorModel';
-import { ITextFileService, TextFileResolveReason } from 'vs/workbench/services/textfile/common/textfiles';
-import { Schemas } from 'vs/base/common/network';
-import { ITextModelService, ITextModelContentProvider, ITextEditorModel, IResolvedTextEditorModel } from 'vs/editor/common/services/resolverService';
-import { TextFileEditorModel } from 'vs/workbench/services/textfile/common/textFileEditorModel';
-import { IFileService } from 'vs/platform/files/common/files';
-import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
-import { IUndoRedoService } from 'vs/platform/undoRedo/common/undoRedo';
-import { ModelUndoRedoParticipant } from 'vs/editor/common/services/modelUndoRedoParticipant';
-import { IUriIdentityService } from 'vs/workbench/services/uriIdentity/common/uriIdentity';
+import { URI } from '../../../../base/common/uri.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IDisposable, toDisposable, IReference, ReferenceCollection, Disposable, AsyncReferenceCollection } from '../../../../base/common/lifecycle.js';
+import { IModelService } from '../../../../editor/common/services/model.js';
+import { TextResourceEditorModel } from '../../../common/editor/textResourceEditorModel.js';
+import { ITextFileService, TextFileResolveReason } from '../../textfile/common/textfiles.js';
+import { Schemas } from '../../../../base/common/network.js';
+import { ITextModelService, ITextModelContentProvider, ITextEditorModel, IResolvedTextEditorModel, isResolvedTextEditorModel } from '../../../../editor/common/services/resolverService.js';
+import { TextFileEditorModel } from '../../textfile/common/textFileEditorModel.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+import { IUndoRedoService } from '../../../../platform/undoRedo/common/undoRedo.js';
+import { ModelUndoRedoParticipant } from '../../../../editor/common/services/modelUndoRedoParticipant.js';
+import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
+import { UntitledTextEditorModel } from '../../untitled/common/untitledTextEditorModel.js';
+import { ITextBufferFactory } from '../../../../editor/common/model.js';
+import { ILanguageSelection } from '../../../../editor/common/languages/language.js';
+import { generateUuid } from '../../../../base/common/uuid.js';
 
-class ResourceModelCollection extends ReferenceCollection<Promise<ITextEditorModel>> {
+class ResourceModelCollection extends ReferenceCollection<Promise<IResolvedTextEditorModel>> {
 
 	private readonly providers = new Map<string, ITextModelContentProvider[]>();
-	private readonly modelsToDispose = new Set<string>();
+	private readonly modelsToDispose = new Map<string, Promise<ITextEditorModel>>();
 
 	constructor(
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
@@ -33,41 +36,72 @@ class ResourceModelCollection extends ReferenceCollection<Promise<ITextEditorMod
 		super();
 	}
 
-	createReferencedObject(key: string): Promise<ITextEditorModel> {
+	protected createReferencedObject(key: string, value?: string | ITextBufferFactory, languageSelection: ILanguageSelection | null = null): Promise<IResolvedTextEditorModel> {
+		if (value !== undefined) {
+			return this.createSyntheticDocument(URI.parse(key), value, languageSelection);
+		}
 		return this.doCreateReferencedObject(key);
 	}
 
-	private async doCreateReferencedObject(key: string, skipActivateProvider?: boolean): Promise<ITextEditorModel> {
+	private async createSyntheticDocument(resource: URI, value: string | ITextBufferFactory, languageSelection: ILanguageSelection | null): Promise<IResolvedTextEditorModel> {
+		// ReferenceCollection installs the entry after invoking its factory. Establish
+		// the creator's reference before createModel can reenter via onModelAdded.
+		await Promise.resolve();
+		const textModel = this.modelService.createModel(value, languageSelection, resource);
+		try {
+			const model = this.instantiationService.createInstance(TextResourceEditorModel, resource);
+			this.ensureResolvedModel(model, resource.toString());
+			return model;
+		} catch (error) {
+			textModel.dispose();
+			throw error;
+		}
+	}
+
+	private async doCreateReferencedObject(key: string, skipActivateProvider?: boolean): Promise<IResolvedTextEditorModel> {
+		const resource = URI.parse(key);
 
 		// Untrack as being disposed
+		const pendingModel = this.modelsToDispose.get(key);
 		this.modelsToDispose.delete(key);
-
-		// inMemory Schema: go through model service cache
-		const resource = URI.parse(key);
-		if (resource.scheme === Schemas.inMemory) {
-			const cachedModel = this.modelService.getModel(resource);
-			if (!cachedModel) {
-				throw new Error(`Unable to resolve inMemory resource ${key}`);
-			}
-
-			return this.instantiationService.createInstance(TextResourceEditorModel, resource);
-		}
 
 		// Untitled Schema: go through untitled text service
 		if (resource.scheme === Schemas.untitled) {
-			return this.textFileService.untitled.resolve({ untitledResource: resource });
+			const model = await this.textFileService.untitled.resolve({ untitledResource: resource });
+			this.ensureResolvedModel(model, key);
+			return model;
 		}
 
 		// File or remote file: go through text file service
-		if (this.fileService.canHandleResource(resource)) {
-			return this.textFileService.files.resolve(resource, { reason: TextFileResolveReason.REFERENCE });
+		if (this.fileService.hasProvider(resource)) {
+			const model = await this.textFileService.files.resolve(resource, { reason: TextFileResolveReason.REFERENCE });
+			this.ensureResolvedModel(model, key);
+			return model;
 		}
 
-		// Virtual documents
-		if (this.providers.has(resource.scheme)) {
-			await this.resolveTextModelContent(key);
+		// In-Memory / Virtual documents
+		if (resource.scheme === Schemas.inMemory || this.providers.has(resource.scheme)) {
+			await this.ensureResolvedTextModelContent(resource); // throws if failing to resolve content
 
-			return this.instantiationService.createInstance(TextResourceEditorModel, resource);
+			let model: ITextEditorModel | undefined = undefined;
+			if (pendingModel) {
+				try {
+					// if we have a pending model for this key, we try to await that and prevent
+					// creating a new model so that we are not leaking models. we only do this for
+					// in-memory or virtual documents where we create models here, the others are
+					// already shared by their respective services.
+					model = await pendingModel;
+				} catch {
+					// ignore and re-create below
+				}
+			}
+
+			if (!model) {
+				model = this.instantiationService.createInstance(TextResourceEditorModel, resource);
+			}
+
+			this.ensureResolvedModel(model, key);
+			return model;
 		}
 
 		// Either unknown schema, or not yet registered, try to activate
@@ -80,24 +114,24 @@ class ResourceModelCollection extends ReferenceCollection<Promise<ITextEditorMod
 		throw new Error(`Unable to resolve resource ${key}`);
 	}
 
-	destroyReferencedObject(key: string, modelPromise: Promise<ITextEditorModel>): void {
-
-		// untitled and inMemory are bound to a different lifecycle
-		const resource = URI.parse(key);
-		if (resource.scheme === Schemas.untitled || resource.scheme === Schemas.inMemory) {
-			return;
+	private ensureResolvedModel(model: ITextEditorModel, key: string): asserts model is IResolvedTextEditorModel {
+		if (!isResolvedTextEditorModel(model)) {
+			throw new Error(`Unable to resolve resource ${key}`);
 		}
+	}
+
+	protected destroyReferencedObject(key: string, modelPromise: Promise<ITextEditorModel>): void {
 
 		// Track as being disposed before waiting for model to load
-		// to handle the case that the reference is aquired again
-		this.modelsToDispose.add(key);
+		// to handle the case that the reference is acquired again
+		this.modelsToDispose.set(key, modelPromise);
 
 		(async () => {
 			try {
 				const model = await modelPromise;
 
 				if (!this.modelsToDispose.has(key)) {
-					// return if model has been aquired again meanwhile
+					// return if model has been acquired again meanwhile
 					return;
 				}
 
@@ -105,10 +139,14 @@ class ResourceModelCollection extends ReferenceCollection<Promise<ITextEditorMod
 					// text file models have conditions that prevent them
 					// from dispose, so we have to wait until we can dispose
 					await this.textFileService.files.canDispose(model);
+				} else if (model instanceof UntitledTextEditorModel) {
+					// untitled file models have conditions that prevent them
+					// from dispose, so we have to wait until we can dispose
+					await this.textFileService.untitled.canDispose(model);
 				}
 
 				if (!this.modelsToDispose.has(key)) {
-					// return if model has been aquired again meanwhile
+					// return if model has been acquired again meanwhile
 					return;
 				}
 
@@ -154,18 +192,25 @@ class ResourceModelCollection extends ReferenceCollection<Promise<ITextEditorMod
 		return this.providers.get(scheme) !== undefined;
 	}
 
-	private async resolveTextModelContent(key: string): Promise<ITextModel> {
-		const resource = URI.parse(key);
-		const providersForScheme = this.providers.get(resource.scheme) || [];
+	private async ensureResolvedTextModelContent(resource: URI): Promise<void> {
 
-		for (const provider of providersForScheme) {
-			const value = await provider.provideTextContent(resource);
-			if (value) {
-				return value;
+		// in-memory based
+		if (resource.scheme === Schemas.inMemory) {
+			if (this.modelService.getModel(resource)) {
+				return;
 			}
 		}
 
-		throw new Error(`Unable to resolve text model content for resource ${key}`);
+		// provider based
+		const providersForScheme = this.providers.get(resource.scheme) || [];
+
+		for (const provider of providersForScheme) {
+			if (await provider.provideTextContent(resource)) {
+				return;
+			}
+		}
+
+		throw new Error(`Unable to resolve text model content for resource ${resource.toString()}`);
 	}
 }
 
@@ -173,8 +218,23 @@ export class TextModelResolverService extends Disposable implements ITextModelSe
 
 	declare readonly _serviceBrand: undefined;
 
-	private readonly resourceModelCollection = this.instantiationService.createInstance(ResourceModelCollection);
-	private readonly asyncModelCollection = new AsyncReferenceCollection(this.resourceModelCollection);
+	private _resourceModelCollection: ResourceModelCollection & ReferenceCollection<Promise<IResolvedTextEditorModel>> /* TS Fail */ | undefined = undefined;
+	private get resourceModelCollection() {
+		if (!this._resourceModelCollection) {
+			this._resourceModelCollection = this.instantiationService.createInstance(ResourceModelCollection);
+		}
+
+		return this._resourceModelCollection;
+	}
+
+	private _asyncModelCollection: AsyncReferenceCollection<IResolvedTextEditorModel> | undefined = undefined;
+	private get asyncModelCollection() {
+		if (!this._asyncModelCollection) {
+			this._asyncModelCollection = new AsyncReferenceCollection(this.resourceModelCollection);
+		}
+
+		return this._asyncModelCollection;
+	}
 
 	constructor(
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
@@ -195,8 +255,12 @@ export class TextModelResolverService extends Disposable implements ITextModelSe
 		// with different resource forms (e.g. path casing on Windows)
 		resource = this.uriIdentityService.asCanonicalUri(resource);
 
-		const result = await this.asyncModelCollection.acquire(resource.toString());
-		return result as IReference<IResolvedTextEditorModel>; // TODO@Ben: why is this cast here?
+		return await this.asyncModelCollection.acquire(resource.toString());
+	}
+
+	async createSyntheticDocument(value: string | ITextBufferFactory, languageSelection: ILanguageSelection | null): Promise<IReference<IResolvedTextEditorModel>> {
+		const resource = this.uriIdentityService.asCanonicalUri(URI.from({ scheme: Schemas.inMemory, path: `/synthetic/${generateUuid()}` }));
+		return this.asyncModelCollection.acquire(resource.toString(), value, languageSelection);
 	}
 
 	registerTextModelContentProvider(scheme: string, provider: ITextModelContentProvider): IDisposable {
@@ -204,7 +268,7 @@ export class TextModelResolverService extends Disposable implements ITextModelSe
 	}
 
 	canHandleResource(resource: URI): boolean {
-		if (this.fileService.canHandleResource(resource) || resource.scheme === Schemas.untitled || resource.scheme === Schemas.inMemory) {
+		if (this.fileService.hasProvider(resource) || resource.scheme === Schemas.untitled || resource.scheme === Schemas.inMemory) {
 			return true; // we handle file://, untitled:// and inMemory:// automatically
 		}
 
@@ -212,4 +276,4 @@ export class TextModelResolverService extends Disposable implements ITextModelSe
 	}
 }
 
-registerSingleton(ITextModelService, TextModelResolverService, true);
+registerSingleton(ITextModelService, TextModelResolverService, InstantiationType.Delayed);

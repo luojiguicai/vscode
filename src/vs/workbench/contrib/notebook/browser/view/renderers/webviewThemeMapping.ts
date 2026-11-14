@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { WebviewStyles } from 'vs/workbench/contrib/webview/browser/webview';
+import { WebviewStyles } from '../../../../webview/browser/webview.js';
 
 const mapping: ReadonlyMap<string, string> = new Map([
 	['theme-font-family', 'vscode-font-family'],
@@ -18,6 +18,7 @@ const mapping: ReadonlyMap<string, string> = new Map([
 	['theme-quote-background', 'vscode-textBlockQuote-background'],
 	['theme-quote-border', 'vscode-textBlockQuote-border'],
 	['theme-code-foreground', 'vscode-textPreformat-foreground'],
+	['theme-code-background', 'vscode-textPreformat-background'],
 	// Editor
 	['theme-background', 'vscode-editor-background'],
 	['theme-foreground', 'vscode-editor-foreground'],
@@ -56,6 +57,7 @@ const mapping: ReadonlyMap<string, string> = new Map([
 	['theme-info-foreground', 'vscode-foreground'],
 	// Notebook:
 	['theme-notebook-output-background', 'vscode-notebook-outputContainerBackgroundColor'],
+	['theme-notebook-output-border', 'vscode-notebook-outputContainerBorderColor'],
 	['theme-notebook-cell-selected-background', 'vscode-notebook-selectedCellBackground'],
 	['theme-notebook-symbol-highlight-background', 'vscode-notebook-symbolHighlightBackground'],
 	['theme-notebook-diff-removed-background', 'vscode-diffEditor-removedTextBackground'],

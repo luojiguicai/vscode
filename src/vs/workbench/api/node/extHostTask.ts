@@ -3,31 +3,30 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as path from 'vs/base/common/path';
+import * as path from '../../../base/common/path.js';
 
-import { URI, UriComponents } from 'vs/base/common/uri';
-import { win32 } from 'vs/base/node/processes';
-import * as types from 'vs/workbench/api/common/extHostTypes';
-import { IExtHostWorkspace } from 'vs/workbench/api/common/extHostWorkspace';
+import { URI, UriComponents } from '../../../base/common/uri.js';
+import { findExecutable } from '../../../base/node/processes.js';
+import * as types from '../common/extHostTypes.js';
+import { IExtHostWorkspace } from '../common/extHostWorkspace.js';
 import type * as vscode from 'vscode';
-import * as tasks from '../common/shared/tasks';
-import { ExtHostVariableResolverService } from 'vs/workbench/api/common/extHostDebugService';
-import { IExtHostDocumentsAndEditors } from 'vs/workbench/api/common/extHostDocumentsAndEditors';
-import { IExtHostConfiguration } from 'vs/workbench/api/common/extHostConfiguration';
-import { IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
-import { IExtensionDescription } from 'vs/platform/extensions/common/extensions';
-import { IExtHostTerminalService } from 'vs/workbench/api/common/extHostTerminalService';
-import { IExtHostRpcService } from 'vs/workbench/api/common/extHostRpcService';
-import { IExtHostInitDataService } from 'vs/workbench/api/common/extHostInitDataService';
-import { ExtHostTaskBase, TaskHandleDTO, TaskDTO, CustomExecutionDTO, HandlerData } from 'vs/workbench/api/common/extHostTask';
-import { Schemas } from 'vs/base/common/network';
-import { ILogService } from 'vs/platform/log/common/log';
-import { IExtHostApiDeprecationService } from 'vs/workbench/api/common/extHostApiDeprecationService';
-import { IExtHostEditorTabs } from 'vs/workbench/api/common/extHostEditorTabs';
+import * as tasks from '../common/shared/tasks.js';
+import { IExtHostDocumentsAndEditors } from '../common/extHostDocumentsAndEditors.js';
+import { IExtHostConfiguration } from '../common/extHostConfiguration.js';
+import { IWorkspaceFolder, WorkspaceFolder } from '../../../platform/workspace/common/workspace.js';
+import { IExtensionDescription } from '../../../platform/extensions/common/extensions.js';
+import { IExtHostTerminalService } from '../common/extHostTerminalService.js';
+import { IExtHostRpcService } from '../common/extHostRpcService.js';
+import { IExtHostInitDataService } from '../common/extHostInitDataService.js';
+import { ExtHostTaskBase, TaskHandleDTO, TaskDTO, CustomExecutionDTO, HandlerData } from '../common/extHostTask.js';
+import { Schemas } from '../../../base/common/network.js';
+import { ILogService } from '../../../platform/log/common/log.js';
+import { IExtHostApiDeprecationService } from '../common/extHostApiDeprecationService.js';
+import * as resources from '../../../base/common/resources.js';
+import { homedir } from 'os';
+import { IExtHostVariableResolverProvider } from '../common/extHostVariableResolverService.js';
 
 export class ExtHostTask extends ExtHostTaskBase {
-	private _variableResolver: ExtHostVariableResolverService | undefined;
-
 	constructor(
 		@IExtHostRpcService extHostRpc: IExtHostRpcService,
 		@IExtHostInitDataService initData: IExtHostInitDataService,
@@ -37,7 +36,7 @@ export class ExtHostTask extends ExtHostTaskBase {
 		@IExtHostTerminalService extHostTerminalService: IExtHostTerminalService,
 		@ILogService logService: ILogService,
 		@IExtHostApiDeprecationService deprecationService: IExtHostApiDeprecationService,
-		@IExtHostEditorTabs private readonly editorTabs: IExtHostEditorTabs
+		@IExtHostVariableResolverProvider private readonly variableResolver: IExtHostVariableResolverProvider,
 	) {
 		super(extHostRpc, initData, workspaceService, editorService, configurationService, extHostTerminalService, logService, deprecationService);
 		if (initData.remote.isRemote && initData.remote.authority) {
@@ -84,7 +83,7 @@ export class ExtHostTask extends ExtHostTaskBase {
 			// in the provided custom execution map that is cleaned up after the
 			// task is executed.
 			if (CustomExecutionDTO.is(dto.execution)) {
-				await this.addCustomExecution(dto, task, false);
+				await this.addCustomExecution(dto, task);
 			}
 			// Always get the task execution first to prevent timing issues when retrieving it later
 			const execution = await this.getTaskExecution(await this._proxy.$getTaskExecution(dto), task);
@@ -93,17 +92,17 @@ export class ExtHostTask extends ExtHostTaskBase {
 		}
 	}
 
-	protected provideTasksInternal(validTypes: { [key: string]: boolean; }, taskIdPromises: Promise<void>[], handler: HandlerData, value: vscode.Task[] | null | undefined): { tasks: tasks.TaskDTO[], extension: IExtensionDescription } {
-		const taskDTOs: tasks.TaskDTO[] = [];
+	protected provideTasksInternal(validTypes: { [key: string]: boolean }, taskIdPromises: Promise<void>[], handler: HandlerData, value: vscode.Task[] | null | undefined): { tasks: tasks.ITaskDTO[]; extension: IExtensionDescription } {
+		const taskDTOs: tasks.ITaskDTO[] = [];
 		if (value) {
-			for (let task of value) {
+			for (const task of value) {
 				this.checkDeprecation(task, handler);
 
 				if (!task.definition || !validTypes[task.definition.type]) {
 					this._logService.warn(`The task [${task.source}, ${task.name}] uses an undefined task type. The task will be ignored in the future.`);
 				}
 
-				const taskDTO: tasks.TaskDTO | undefined = TaskDTO.from(task, handler.extension);
+				const taskDTO: tasks.ITaskDTO | undefined = TaskDTO.from(task, handler.extension);
 				if (taskDTO) {
 					taskDTOs.push(taskDTO);
 
@@ -111,7 +110,7 @@ export class ExtHostTask extends ExtHostTaskBase {
 						// The ID is calculated on the main thread task side, so, let's call into it here.
 						// We need the task id's pre-computed for custom task executions because when OnDidStartTask
 						// is invoked, we have to be able to map it back to our data.
-						taskIdPromises.push(this.addCustomExecution(taskDTO, task, true));
+						taskIdPromises.push(this.addCustomExecution(taskDTO, task, handler));
 					}
 				}
 			}
@@ -122,39 +121,46 @@ export class ExtHostTask extends ExtHostTaskBase {
 		};
 	}
 
-	protected async resolveTaskInternal(resolvedTaskDTO: tasks.TaskDTO): Promise<tasks.TaskDTO | undefined> {
+	protected async resolveTaskInternal(resolvedTaskDTO: tasks.ITaskDTO): Promise<tasks.ITaskDTO | undefined> {
 		return resolvedTaskDTO;
 	}
 
-	private async getVariableResolver(workspaceFolders: vscode.WorkspaceFolder[]): Promise<ExtHostVariableResolverService> {
-		if (this._variableResolver === undefined) {
-			const configProvider = await this._configurationService.getConfigProvider();
-			this._variableResolver = new ExtHostVariableResolverService(workspaceFolders, this._editorService, configProvider, this.editorTabs, this.workspaceService);
+	private async getAFolder(workspaceFolders: vscode.WorkspaceFolder[] | undefined): Promise<IWorkspaceFolder> {
+		let folder = (workspaceFolders && workspaceFolders.length > 0) ? workspaceFolders[0] : undefined;
+		if (!folder) {
+			const userhome = URI.file(homedir());
+			folder = new WorkspaceFolder({ uri: userhome, name: resources.basename(userhome), index: 0 });
 		}
-		return this._variableResolver;
+		return {
+			uri: folder.uri,
+			name: folder.name,
+			index: folder.index,
+			toResource: () => {
+				throw new Error('Not implemented');
+			}
+		};
 	}
 
-	public async $resolveVariables(uriComponents: UriComponents, toResolve: { process?: { name: string; cwd?: string; path?: string }, variables: string[] }): Promise<{ process?: string, variables: { [key: string]: string; } }> {
+	public async $resolveVariables(uriComponents: UriComponents, toResolve: { process?: { name: string; cwd?: string; path?: string }; variables: string[] }): Promise<{ process?: string; variables: { [key: string]: string } }> {
 		const uri: URI = URI.revive(uriComponents);
 		const result = {
-			process: <unknown>undefined as string,
+			process: undefined as string | undefined,
 			variables: Object.create(null)
 		};
 		const workspaceFolder = await this._workspaceProvider.resolveWorkspaceFolder(uri);
-		const workspaceFolders = await this._workspaceProvider.getWorkspaceFolders2();
-		if (!workspaceFolders || !workspaceFolder) {
-			throw new Error('Unexpected: Tasks can only be run in a workspace folder');
-		}
-		const resolver = await this.getVariableResolver(workspaceFolders);
-		const ws: IWorkspaceFolder = {
+		const workspaceFolders = (await this._workspaceProvider.getWorkspaceFolders2()) ?? [];
+
+		const resolver = await this.variableResolver.getResolver();
+		const ws: IWorkspaceFolder = workspaceFolder ? {
 			uri: workspaceFolder.uri,
 			name: workspaceFolder.name,
 			index: workspaceFolder.index,
 			toResource: () => {
 				throw new Error('Not implemented');
 			}
-		};
-		for (let variable of toResolve.variables) {
+		} : await this.getAFolder(workspaceFolders);
+
+		for (const variable of toResolve.variables) {
 			result.variables[variable] = await resolver.resolveAsync(ws, variable);
 		}
 		if (toResolve.process !== undefined) {
@@ -165,11 +171,29 @@ export class ExtHostTask extends ExtHostTaskBase {
 					paths[i] = await resolver.resolveAsync(ws, paths[i]);
 				}
 			}
-			result.process = await win32.findExecutable(
-				await resolver.resolveAsync(ws, toResolve.process.name),
-				toResolve.process.cwd !== undefined ? await resolver.resolveAsync(ws, toResolve.process.cwd) : undefined,
-				paths
-			);
+			const processName = await resolver.resolveAsync(ws, toResolve.process.name);
+			const cwd = toResolve.process.cwd !== undefined ? await resolver.resolveAsync(ws, toResolve.process.cwd) : undefined;
+			// If the process name still contains a `${...}` placeholder it is a
+			// variable that the extension host's resolver cannot expand (for
+			// example `${command:...}` or `${input:...}`). In that case, do not
+			// run `findExecutable` against the literal placeholder and do not
+			// prefix it with the cwd, otherwise the resulting string contains a
+			// concatenation of the cwd and the (later) resolved path
+			// (microsoft/vscode#160891). Pass the unresolved name through so it
+			// can be resolved later by the task system, which has access to the
+			// command/input value mappings.
+			if (/\$\{.+?\}/.test(processName)) {
+				result.process = processName;
+			} else {
+				const foundExecutable = await findExecutable(processName, cwd, paths);
+				if (foundExecutable) {
+					result.process = foundExecutable;
+				} else if (path.isAbsolute(processName)) {
+					result.process = processName;
+				} else {
+					result.process = path.join(cwd ?? '', processName);
+				}
+			}
 		}
 		return result;
 	}
@@ -178,7 +202,7 @@ export class ExtHostTask extends ExtHostTaskBase {
 		return true;
 	}
 
-	public async $findExecutable(command: string, cwd?: string, paths?: string[]): Promise<string> {
-		return win32.findExecutable(command, cwd, paths);
+	public async $findExecutable(command: string, cwd?: string, paths?: string[]): Promise<string | undefined> {
+		return findExecutable(command, cwd, paths);
 	}
 }

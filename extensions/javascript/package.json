@@ -2,17 +2,24 @@
   "name": "javascript",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.0",
+  "version": "10.0.0",
   "publisher": "vscode",
   "license": "MIT",
   "engines": {
     "vscode": "0.10.x"
   },
+  "categories": ["Programming Languages"],
   "contributes": {
+    "configurationDefaults": {
+      "[javascript]": {
+        "editor.maxTokenizationLineLength": 2500
+      }
+    },
     "languages": [
       {
         "id": "javascriptreact",
         "aliases": [
+          "JavaScript JSX",
           "JavaScript React",
           "jsx"
         ],
@@ -62,6 +69,7 @@
           "meta.embedded.expression.js": "javascriptreact"
         },
         "tokenTypes": {
+          "punctuation.definition.template-expression": "other",
           "entity.name.type.instance.jsdoc": "other",
           "entity.name.function.tagged-template": "other",
           "meta.import string.quoted": "other",
@@ -79,6 +87,7 @@
           "meta.embedded.expression.js": "javascript"
         },
         "tokenTypes": {
+          "punctuation.definition.template-expression": "other",
           "entity.name.type.instance.jsdoc": "other",
           "entity.name.function.tagged-template": "other",
           "meta.import string.quoted": "other",
